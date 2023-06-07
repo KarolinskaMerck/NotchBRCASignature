@@ -1,0 +1,1791 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 4 - Broad Breast Cancer Data set"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part4.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  # 4 inch high, 6 inch wide
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                 
+	fig.align = "center",
+	# fig.path = "../Figures/Part4/",
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     # if set to false, the code will be omitted
+	cache = FALSE                    # could be useful during the development of a new project
+	                                 #don't forget to exclude the cache folder in the .gitignore
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01_packages, results = 'hide'}
+
+library(tidyverse)      # load the tidyverse functionality, e.g. %>% or ggplot2
+library(vroom)          # Import txt files
+
+# publish the report
+
+library(markdown)
+library(rmarkdown)
+library(knitr)          # Also to present tables in a nice way
+
+# tables
+
+library(kableExtra)     # improve output for kable
+
+# plots
+
+library(ComplexHeatmap) # very good tool to draw heatmaps
+library(circlize)
+library(viridis)        # Color Blind palette
+library(ggpubr)         
+
+# RNASeq
+library(PCAtools)
+library(uwot)
+library(Organism.dplyr)
+library(org.Hs.eg.db)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(limma)
+
+library(clusterProfiler)
+library(msigdbr)
+
+# statistics
+# 
+library(rstatix)        
+
+# Citations:
+
+knitr::write_bib(file = '../src/part4.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+# Executive Summary
+
+**Introduction**
+
+We want to identify robust NOTCH signatures for the activation and inactivation of the NOTCH pathway. Therefore, the group of Urban Lendahl at the Karolinska Institutet, Stockholm, Schweden and the group of Dirk Wienke at the Translational Innovation Platform Oncology and Immuno-Oncology at Merck KGaA, Darmstadt, Germany teamed up.  
+
+**Research Questions**
+
+<div class = "box">
+We want to validate the identified NOTCH signatures (published and experimental derived) for the activation and inactivation of the NOTCH pathway on an independent experimental data set. Therefore, we treated breast cancer cell lines from **basal**, **her2** and **luminal A** subtype either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time. Of each time point, cell line and treatment the transcriptome of one replicate was analyzed by RNASeq.  
+
+*Treatments:*  
+
+* normal (no treatment): "FC"
+* NOTCH ON (cultured on immobilised Jagged1 ligand): "Jagged1"
+* NOTCH OFF (blocked with GSI): "DAPT"
+* Control: Jagged1 + DAPT
+</div>
+  
+**Methods**
+
+The data is imported and normalized following the `limma` pipeline, as we only have one replicate per cell line analyzed and subsequently QC checked by dimensionality reduction methods and visualization of positive controls.  
+The TPM normalized data is exported to be further analyzed.  
+
+**Conclusion**  
+
+<div class = "box">
+QC of the data is acceptable. Nevertheless, the main driver of variance in this data set is again the difference in transcriptomics between the cell lines (see Part 1 for the training data set). The treatment effect is in comparison to the differences in the cell lines neglectible and more replicates per cell line would be needed to identify the small differences between the cell lines.  
+We make use of the results to validate the Notch signatures derived earlier.  
+</div>
+  
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `markdown` [@R-markdown] and `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and knitr [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].  
+Plots are drawn by `ggplot2` and `ggpubr` [@R-ggpubr].  
+Tables are drawn, using the kable functionality of the `knitr` package, together with `kableExtra` styling [@R-kableExtra].
+  
+**RNASeq Data Import**  
+The data was imported using vroom [@R-vroom] and subsequently imported via the `limma` pipeline [@limma2015; @R-limma]. Gene symbols were annotated using the `AnnotationDbi` [@R-AnnotationDbi; @R-AnnotationFilter], `org.Hs.eg.db` [@R-org.Hs.eg.db] and `TxDb.Hsapiens.UCSC.hg19.knownGene` [@R-TxDb.Hsapiens.UCSC.hg19.knownGene] by using `Organism.dplyr` [@R-Organism.dplyr].  
+Dimensionality of the data set was reduced by `PCAtools` [@R-PCAtools] and UMAPs generated by `uwot` [@R-uwot].  
+  
+# Dataimport
+
+```{r 02-dataimport, echo = T, results = 'hide'}
+
+# --- Part 2: Data ingestion and QC
+
+# --- Function for reading in TPMs
+
+tpm.path  = base::file.path('../',
+                            'data',
+                            'Validation',
+                            'dat',
+                            'batch_01_rnaseq_quant_stringtie')
+
+qnt.tpm  = fs::dir_ls(path=tpm.path, glob='*abund.txt')                  %>%
+  tibble::enframe(value='path', name=NULL)                    %>%
+  dplyr::mutate(sample_name=stringr::str_match(path,
+                                               '/([A-Z0-9_]*)Aligned')[, 2]) %>%
+  dplyr::mutate(data=base::lapply(path, vroom,
+                                  num_threads=1,
+                                  altrep_opts=c()))           %>%
+  tidyr::unnest(data)                                         %>%
+  dplyr::select(sample_name,
+                gene_ensembl=`Gene ID`,
+                gene_symbol=`Gene Name`,
+                quant_tpm=TPM)                                %>%
+  dplyr::group_by(sample_name, gene_ensembl, gene_symbol)     %>%
+  dplyr::summarize(quant_tpm=base::mean(quant_tpm, na.rm=T))  %>%
+  dplyr::ungroup()                                            %>%
+  tibble::as_tibble()
+
+
+# --- Function for readin in raw counts
+
+cnt.path  = base::file.path('../',
+                            'data',
+                            'Validation',
+                            'dat',
+                            'batch_01_rnaseq_quant_featurecounts')
+qnt.cnt  = fs::dir_ls(path=cnt.path, glob='*featureCounts.txt')          %>%
+  tibble::enframe(value='path', name=NULL)                    %>%
+  dplyr::mutate(sample_name=stringr::str_match(path,
+                                               '/([A-Z0-9_]*)Aligned')[, 2]) %>%
+  dplyr::mutate(data=base::lapply(path, vroom,
+                                  delim='\t',
+                                  skip=2,
+                                  num_threads=1,
+                                  col_names=F,
+                                  altrep_opts=c()))           %>%
+  tidyr::unnest(data)                                         %>%
+  dplyr::select(sample_name, gene_ensembl=3, quant_count=9)   %>%
+  dplyr::mutate(sample_name=base::as.character(sample_name))  %>%
+  tibble::as_tibble()
+
+# --- Function for reading in metadata
+
+lib.path  = base::file.path('../',
+                            'data',
+                            'Validation',
+                            'dat',
+                            'batch_01_rnaseq_meta_sampleinfo',
+                            'U.Lendahl_16_01_library_info.txt')
+
+met.lib   = vroom::vroom(lib.path)                                        %>%
+  dplyr::filter(`Lib QC` != 'FAILED')                          %>%
+  dplyr::select(sample_name=`NGI ID`,
+                condition_lib_prep=`Lib Prep`)
+
+
+# --- Read sample metadata
+
+sam.path  = base::file.path('../',
+                            'data',
+                            'Validation',
+                            'dat',
+                            'batch_01_rnaseq_meta_sampleinfo',
+                            'U.Lendahl_16_01_sample_info.txt')
+met.sam   = vroom::vroom(sam.path)                                        %>%
+  dplyr::select(sample_name=`NGI ID`, condition=`User ID`)      %>%
+  tidyr::extract(condition,
+                 into=c('condition_cell_line',
+                        'condition_treatment',
+                        'condition_time'),
+                 regex='^([a-zA-Z0-9-]+) (.*) ([0-9]+h)$')
+
+# --- Read in subtypes
+# --- Source: Dai et al., J Cancer, 8(16):3131–3141 (2017)
+# --- TNBCA/B: TNBC-basal A is more luminal-like and TNBC-basal B more basal-like
+
+met.sub   = base::data.frame(condition_cell_line=c('HCC1428', 'HCC1569',
+                                                   'T47D',    'HCC70',
+                                                   'MCF-7',   'HCC1937',
+                                                   'JIMT1',   'HCC1954',
+                                                   'BT474',   'HCC1143',
+                                                   'HCC1419', 'MDAMB231',
+                                                   'BT549',   'HS578t',
+                                                   'HCC38',   'SKBR3',
+                                                   'KPL4',    'MDAMB157',
+                                                   'BT20',    'MDAMB468',
+                                                   'HCC1187'),
+                             condition_subtype= c('luma',    'her2',
+                                                  'luma',    'basal',
+                                                  'luma',    'basal',
+                                                  'her2',    'her2',
+                                                  'lumb',    'basal',
+                                                  'her2',    'basal',
+                                                  'basal',   'basal',
+                                                  'basal',   'her2',
+                                                  'her2',    'basal',
+                                                  'basal',   'basal',
+                                                  'basal'))
+
+# --- Import metadata files
+met.fail = c('P6951_326', 'P6951_383', 'P6951_358')
+
+# --- Prepare combined, long quantitation dataframe
+qnt.all  = qnt.tpm                                                        %>%
+  dplyr::left_join(qnt.cnt, by=c('sample_name',
+                                 'gene_ensembl'))             %>%
+  dplyr::inner_join(met.lib)                                    %>%
+  dplyr::inner_join(met.sam)                                    %>%
+  dplyr::left_join(met.sub)                                     %>%
+  dplyr::mutate(sample_name=base::as.character(sample_name))    %>%
+  dplyr::filter(!sample_name %in% met.fail)                     %>%
+  dplyr::mutate(condition_cell_line=base::gsub('-', '',
+                                               condition_cell_line))   %>%
+  dplyr::group_by(condition_subtype)                            %>%
+  dplyr::mutate(subtype_cell_lines=base::length(
+    base::unique(
+      condition_cell_line)))        %>%
+  dplyr::ungroup()                                              %>%
+  dplyr::filter(subtype_cell_lines > 1)                         %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`             = '1_normal',
+    `FC + DAPT`      = '2_low',
+    `Jagged1`        = '3_high',
+    `Jagged1 + DAPT` = '0_control'))
+
+# --- Transform long count quantitations into matrix
+qnt.mat = qnt.all                                                          %>%
+  dplyr::select(sample_name, gene_symbol, quant_count)            %>%
+  dplyr::filter(gene_symbol != '' & !base::is.na(gene_symbol))    %>%
+  dplyr::group_by(sample_name, gene_symbol)                       %>%
+  dplyr::summarize(quant_count=base::sum(quant_count, na.rm=T))   %>%
+  dplyr::ungroup()                                                %>%
+  tidyr::pivot_wider(id_cols=sample_name,
+                     names_from=gene_symbol,
+                     values_from=quant_count)                     %>%
+  tibble::column_to_rownames('sample_name')                       %>%
+  base::as.matrix()                                               %>%
+  base::t()
+
+# --- Prepare separate sample metadata matrix
+qnt.met = qnt.all                                                           %>%
+  dplyr::select(sample_name,
+                condition_lib_prep,
+                condition_cell_line,
+                condition_treatment,
+                condition_subtype,
+                condition_time)                                   %>%
+  tidyr::unite('condition_group',
+               condition_subtype,
+               condition_treatment,
+               condition_time, remove=F)                          %>%
+  tidyr::unite('condition_label',
+               condition_cell_line,
+               condition_treatment,
+               condition_time,
+               condition_subtype, remove=F)                       %>%
+  dplyr::mutate_if(base::is.character, base::as.factor)           %>%
+  dplyr::distinct()                                               %>%
+  dplyr::mutate(sample=sample_name)                               %>%
+  tibble::column_to_rownames('sample')
+
+# --- Add chromosomal annotations to gene symbols
+qnt.ann = Organism.dplyr::src_organism('TxDb.Hsapiens.UCSC.hg19.knownGene') %>%
+  Organism.dplyr::select(keytype='symbol',
+                         keys=base::rownames(qnt.mat),
+                         columns=c('symbol', 'gene_chrom',
+                                   'genename', 'ensembl'))          %>%
+  dplyr::distinct(symbol, .keep_all=T)                              %>%
+  dplyr::right_join(base::data.frame(symbol=
+                                       base::rownames(qnt.mat))) %>%
+  tibble::column_to_rownames('symbol')
+
+# --- Gather information on the completeness of the design
+# --- For a complete design, each cell line would have four condition times
+# --- two time points, i.e., 8 samples. We see that this is not the case and we
+# --- cannot run a fully paired design cross all conditions
+
+cell_line_overview <- qnt.all %>%
+  dplyr::group_by(condition_cell_line,
+                  condition_subtype,
+                  subtype_cell_lines)                                       %>%
+  dplyr::distinct(sample_name)                                              %>%
+  dplyr::count()                                                            %>%
+  dplyr::arrange(subtype_cell_lines, condition_subtype)
+
+# A tibble: 20 x 4
+# Groups:   condition_cell_line, condition_subtype, subtype_cell_lines [20]
+#    condition_cell_line condition_subtype subtype_cell_lines sampl
+#    <chr>               <fct>                          <int> <int>
+#  1 HCC1428             luma                               3     8
+#  2 MCF7                luma                               3     8
+#  3 T47D                luma                               3     8
+#  4 BT549               basal                              11    1
+#  5 HCC38               basal                              11    6
+#  6 HS578t              basal                              11    7
+#  7 MDAMB157            basal                              11    8
+#  8 MDAMB231            basal                              11    7
+#  9 HCC1419             her2                               6     7
+# 10 HCC1569             her2                               6     8
+# 11 HCC1954             her2                               6     8
+# 12 JIMT1               her2                               6     8
+# 13 KPL4                her2                               6     7
+# 14 SKBR3               her2                               6     6
+# 15 BT20                basal                              11    8
+# 16 HCC1143             basal                              11    6
+# 17 HCC1187             basal                              11    8
+# 18 HCC1937             basal                              11    2
+# 19 HCC70               basal                              11    8
+# 20 MDAMB468            basal                              11    4
+
+```
+
+# Normalization of Data
+
+Here, we perform an additional annotation based filtering of the genes analyzed in the training cohort of cell lines.
+We will also remove the control samples (both DAPT treated and cultivated on immobilized Jagged1-ligand), as they are used soley as internal controls for now.   
+
+```{r 03-data-normalization, dev='png'}
+
+# --- Part 3: Count normalization with voom/limma
+
+# --- Cross-check whether the dimension names are correctly aligned
+# base::all(base::colnames(qnt.mat) %in% base::rownames(qnt.met))
+# base::all(base::colnames(qnt.mat)  ==  base::rownames(qnt.met))
+# base::all(base::rownames(qnt.mat) %in% base::rownames(qnt.ann))
+# base::all(base::rownames(qnt.mat)  ==  base::rownames(qnt.ann))
+
+qnt.ann2 <- qnt.ann[match(rownames(qnt.mat),rownames(qnt.ann)),]
+# base::all(base::rownames(qnt.mat)  ==  base::rownames(qnt.ann2))
+
+#### Pre-processing:
+
+qnt.ann2$entrez <- mapIds(org.Hs.eg.db,
+                     keys=rownames(qnt.ann2),
+                     column="ENTREZID",
+                     keytype="SYMBOL",
+                     multiVals="first")
+
+qnt.ann2 <- qnt.ann2[!is.na(qnt.ann2$entrez),]
+qnt.mat <- qnt.mat[rownames(qnt.mat) %in% rownames(qnt.ann2),]
+
+# Remove Control Data
+
+qnt.met_no_ctrl <- qnt.met %>%
+  dplyr::filter(condition_treatment != "0_control")
+
+qnt.met_no_ctrl$condition_treatment <- droplevels(qnt.met_no_ctrl$condition_treatment)
+qnt.mat_no_ctrl <- qnt.mat[,as.character(qnt.met_no_ctrl$sample_name)]
+
+# Remove Cell Lines with no two contrast levels available
+
+cell_lines_remove <- cell_line_overview %>% 
+  dplyr::filter(n < 2)
+
+qnt.met_no_ctrl <- qnt.met_no_ctrl %>%
+  dplyr::filter(!condition_cell_line %in% cell_lines_remove$condition_cell_line)
+
+qnt.met_no_ctrl$condition_cell_line <- droplevels(qnt.met_no_ctrl$condition_cell_line)
+qnt.mat_no_ctrl <- qnt.mat_no_ctrl[,as.character(qnt.met_no_ctrl$sample_name)]
+
+# --- Filter lowly expressed genes
+ridx <- which(rowSums(qnt.mat_no_ctrl) <= 10)
+
+qnt.mat_no_ctrl = qnt.mat_no_ctrl[-ridx, ]
+# base::dim(qnt.mat_no_ctrl)
+# [1] 20372   100
+
+qnt.ann2 <- qnt.ann2[rownames(qnt.ann2) %in% rownames(qnt.mat_no_ctrl),]
+
+# --- Transform count data into DGEList and calculate normalization factors
+limma.dat = edgeR::DGEList(counts=qnt.mat_no_ctrl, genes=qnt.ann2)
+limma.fac = edgeR::calcNormFactors(limma.dat, method='TMM')
+
+# --- Filter for genes present in the gene universe of the trainings cohort
+
+rnaseq_gene_universe <- readRDS("../data/rnaseq_gene_universe.rds")
+
+limma.low = base::which(limma.fac$genes$entrez %in% rnaseq_gene_universe$entrez)
+limma.fac = limma.fac[limma.low, ]
+
+# base::dim(limma.fac)
+# # [1] 13470   100
+
+# --- Prepare lib-prep batch effect and group factor for model matrix
+limma.lib = qnt.met_no_ctrl$condition_lib_prep
+limma.grp_trt = qnt.met_no_ctrl$condition_treatment
+limma.grp_time = qnt.met_no_ctrl$condition_time
+limma.grp_cell_line = qnt.met_no_ctrl$condition_cell_line
+limma.grp_subtype = factor(as.character(qnt.met_no_ctrl$condition_subtype))
+limma.grp <- paste0("group_",limma.grp_trt)
+
+# --- Count number of samples within each group
+# base::sort(base::table(limma.grp))
+
+# group_2_low group_1_normal   group_3_high 
+#          32             34             34 
+
+# --- Make design,  controlling for library prep + time points
+
+limma.des = stats::model.matrix(~0+limma.grp+limma.lib+limma.grp_subtype + limma.grp_time)
+base::colnames(limma.des) = base::colnames(limma.des) %>%
+  stringr::str_replace_all('limma.grp', '') %>%
+  stringr::str_replace_all('limma.lib', 'lib_prep_') %>%
+  stringr::str_replace_all('_subtype', 'subtype_') %>%
+  stringr::str_replace_all('_time', 'timepoint_')
+
+
+# --- Apply normalization to convert the read counts to log2-cpm,
+# --- with associated weights, ready for linear modelling
+
+limma.cpm = limma::voom(limma.fac, limma.des, plot=T)
+
+# --- Tell the model about the blocked cell line design and
+limma.cor = limma::duplicateCorrelation(limma.cpm, limma.des,
+                                        block=qnt.met_no_ctrl$condition_cell_line)
+# limma.cor$consensus
+# [1] 0.8584537
+
+# --- The intra cell line correlation will change the voom weights slightly,
+# --- so we run voom a second time ("double voom")
+
+limma.cpm = limma::voom(limma.fac, limma.des,
+                        block=qnt.met_no_ctrl$condition_cell_line,
+                        correlation=limma.cor$consensus,
+                        plot=T)
+#grDevices::dev.off()
+
+# --- Correlation is also updated
+limma.cor = limma::duplicateCorrelation(limma.cpm, limma.des,
+                                        block=qnt.met_no_ctrl$condition_cell_line)
+# limma.cor$consensus
+# [1] 0.8608528
+
+```
+
+## Diagnostic Plots
+
+* PCA  
+* Screeplots  
+* Eigenplots  
+* Pairplots
+
+```{r 4a-PCA, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 12, fig.height=4}
+
+set.seed(1234)
+
+############################# Principal Component analysis ############################# 
+
+qnt.met_PCA <- qnt.met_no_ctrl
+
+qnt.met_PCA$condition_treatment <- factor(qnt.met_PCA$condition_treatment, levels = c("2_low", "1_normal", "3_high"),
+                                      labels = c("Notch off", "ground state", "Notch on"))
+
+qnt.met_PCA$Treatment <- paste(qnt.met_PCA$condition_treatment, "-",qnt.met_PCA$condition_time)
+
+# Limma batch corrected normalized counts:
+
+p <- pca(limma.cpm$E, metadata = qnt.met_PCA, removeVar = 0.1)
+
+horn <- parallelPCA(limma.cpm$E)
+# horn$n
+
+elbow <- findElbowPoint(p$variance)
+# elbow
+
+eigencorplot(p,
+             components = getComponents(p, 1:20),
+             metavars = c('condition_lib_prep','condition_cell_line','condition_treatment','condition_subtype', 'condition_time'),
+             col = c('white', merck_colors[5], merck_colors[1]),
+             cexCorval = 0.7,
+             colCorval = 'black',
+             fontCorval = 2,
+             posLab = 'bottomleft',
+             posColKey = 'right',
+             rotLabX = 45,
+             cexLabColKey = 1.5,
+             scale = TRUE,
+             main = 'PC1-20 correlations',
+             colFrame = 'white',
+             plotRsquared = TRUE)
+
+
+```
+
+```{r 04b-PCA, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 4, fig.height=3}
+
+screeplot(p,
+          components = getComponents(p, 1:20),
+          vline = c(horn$n, elbow),
+          colBar = merck_colors[1],
+          colCumulativeSumLine = merck_colors[6]) +
+  theme_classic() + 
+  geom_text(aes(horn$n - 1.5, 30, label = "Horn's", vjust = -1)) +
+  geom_text(aes(elbow + 1.5, 30, label = "Elbow", vjust = -1)) +
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))
+
+```
+
+```{r 04c-PCA, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 7, fig.height=6}
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "PAM50 Subtype and treatment condition",
+       lab = NA,
+       colby = 'condition_subtype',
+       shape = "Treatment",
+       colkey = subtype_colors[levels(p$metadata$condition_subtype)],
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "PAM50 Subtype and treatment condition",
+       lab = NA,
+       colby = 'condition_subtype',
+       shape = "Treatment",
+       colkey = subtype_colors[levels(p$metadata$condition_subtype)],
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17)) +
+  geom_text_repel(data = p$rotated[,c("PC1", "PC2")] %>% 
+                    tibble::rownames_to_column("sample_name") %>% 
+                    dplyr::left_join(qnt.met_PCA %>% 
+                                       dplyr::select(sample_name, condition_cell_line)) %>% 
+                    group_by(condition_cell_line) %>% 
+                    summarise(PC1 = mean(PC1), 
+                              PC2 = mean(PC2)),
+                  aes(x = PC1,
+                      y = PC2,
+                      label = condition_cell_line),
+                  color = "black") + 
+  guides(col = guide_legend(nrow = 7))
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_cell_line',
+       shape = "Treatment",
+       colkey = merck_colors_ext(1:20),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17)) + 
+  guides(col = guide_legend(nrow = 10))
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Library Prep Batch and treatment condition",
+       lab = NA,
+       colby = 'condition_lib_prep',
+       shape = "Treatment",
+       colkey = merck_colors[c(8,4)],
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+```
+
+```{r 04d-Umap, echo=TRUE, message=FALSE, warning=FALSE, fig.width = 7, fig.height = 6}
+
+set.seed(1234)
+
+z_umap <- umap(scale(limma.cpm$E %>% na.omit() %>% t), pca = 50)
+
+z_umap_df <- data.frame(umap1 = z_umap[,1],
+           umap2 = z_umap[,2],
+           qnt.met_PCA,
+           stringsAsFactors = FALSE)
+
+rownames(z_umap_df) <- rownames(qnt.met_PCA)
+
+ggscatter(z_umap_df,
+          x = "umap1",
+          y = "umap2",
+          #label = "condition_cell_line",
+          #repel = TRUE,
+          color = "condition_cell_line",
+          shape = "Treatment",
+          #alpha = "breast_alpha",
+          size = 2,
+          legend = "right",
+          palette = merck_colors_ext(1:length(levels(z_umap_df$condition_cell_line))),
+          title = "UMAP Dimensionality Reduction") +
+  geom_text_repel(data = z_umap_df %>% group_by(condition_cell_line) %>% 
+               summarise(umap1 = mean(umap1), 
+                         umap2 = mean(umap2)),
+             aes(x = umap1,
+                 y = umap2,
+                 label = condition_cell_line,
+                 color = condition_cell_line)) + 
+  guides(col = guide_legend(nrow = 7)) +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+ggscatter(z_umap_df,
+          x = "umap1",
+          y = "umap2",
+          #label = "condition_cell_line",
+          #repel = TRUE,
+          color = "condition_subtype",
+          shape = "Treatment",
+          #alpha = 0.6,
+          size = 2,
+          legend = "right",
+          palette = subtype_colors[levels(z_umap_df$condition_subtype)],
+          title = "UMAP Dimensionality Reduction") +
+  geom_text_repel(data = z_umap_df %>% group_by(condition_cell_line) %>% 
+               summarise(umap1 = mean(umap1), 
+                         umap2 = mean(umap2)) %>%
+                 left_join(z_umap_df %>% dplyr::select(condition_cell_line, condition_subtype) %>% distinct()),
+             aes(x = umap1,
+                 y = umap2,
+                 label = condition_cell_line,
+                 color = condition_subtype)) + 
+  guides(col = guide_legend(nrow = 7)) +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+
+z_tumap <- tumap(scale(limma.cpm$E %>% na.omit() %>% t), pca = 50)
+
+z_tumap_df <- data.frame(tumap1 = z_tumap[,1],
+           tumap2 = z_tumap[,2],
+           qnt.met_PCA,
+           stringsAsFactors = FALSE)
+
+rownames(z_tumap_df) <- rownames(qnt.met_PCA)
+
+ggscatter(z_tumap_df,
+          x = "tumap1",
+          y = "tumap2",
+          #label = "condition_cell_line",
+          #repel = TRUE,
+          color = "condition_cell_line",
+          shape = "Treatment",
+          #alpha = "breast_alpha",
+          size = 2,
+          legend = "right",
+          palette = merck_colors_ext(1:40),
+          title = "t-UMAP Dimensionality Reduction") +
+  geom_text_repel(data = z_tumap_df %>% group_by(condition_cell_line) %>% 
+               summarise(tumap1 = mean(tumap1), 
+                         tumap2 = mean(tumap2)),
+             aes(x = tumap1,
+                 y = tumap2,
+                 label = condition_cell_line,
+                 color = condition_cell_line)) + 
+  guides(col = guide_legend(nrow = 7)) +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+ggscatter(z_tumap_df,
+          x = "tumap1",
+          y = "tumap2",
+          #label = "label",
+          color = "condition_subtype",
+          shape = "Treatment",
+          #alpha = "breast_alpha",
+          size = 2,
+          legend = "right",
+          palette = subtype_colors[levels(z_umap_df$condition_subtype)],
+          title = "t-UMAP Dimensionality Reduction") + 
+  guides(col = guide_legend(nrow = 7)) +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+
+ggscatter(z_tumap_df,
+          x = "tumap1",
+          y = "tumap2",
+          #label = "condition_cell_line",
+          #repel = TRUE,
+          color = "condition_subtype",
+          shape = "Treatment",
+          #alpha = 0.6,
+          size = 3,
+          legend = "right",
+          palette = subtype_colors[levels(z_umap_df$condition_subtype)],
+          title = "t-UMAP Dimensionality Reduction") +
+  scale_shape_manual(values = c(0,15,1,16,2,17)) +
+  geom_text_repel(data = z_tumap_df %>% group_by(condition_cell_line) %>% 
+               summarise(tumap1 = mean(tumap1), 
+                         tumap2 = mean(tumap2)) %>%
+                 left_join(z_tumap_df %>% dplyr::select(condition_cell_line, condition_subtype) %>% distinct()),
+             aes(x = tumap1,
+                 y = tumap2,
+                 color = condition_subtype,
+                 label = condition_cell_line),
+             nudge_x = -1.3,
+             nudge_y = 0.3) + 
+  guides(col = guide_legend(nrow = 7))
+```
+
+## Heatmap of variable genes
+
+### Between all conditions
+
+```{r 4e-top-variant-genes, fig.width=8, fig.height=8, dev='png'}
+
+ntop <- order(matrixStats::rowVars(limma.cpm$E), decreasing = TRUE)[1:1000]
+cpm_top <- limma.cpm$E[ntop,]
+colnames(cpm_top) <- qnt.met_no_ctrl$condition_cell_line[colnames(cpm_top) %in% qnt.met_no_ctrl$sample_name]
+
+Subtype <- as.character(qnt.met_no_ctrl$condition_subtype)
+Subtype_col <- subtype_colors[levels(qnt.met_no_ctrl$condition_subtype)]
+
+# lib_prep <- as.character(qnt.met_no_ctrl$condition_lib_prep)
+# lib_prep_col <- merck_colors[c(4,5)]
+# names(lib_prep_col) = unique(lib_prep)
+
+# cell_line <- as.character(qnt.met_no_ctrl$condition_cell_line)
+# cell_line_col <- merck_colors_ext(length(unique(cell_line)))
+# names(cell_line_col) = unique(cell_line)
+
+treatment_time <- as.character(qnt.met_no_ctrl$condition_time)
+treatment_time_col <- time_colors[levels(qnt.met_no_ctrl$condition_time)]
+#names(treatment_time_col) = unique(treatment_time)
+
+treatment_factor <- factor(qnt.met_no_ctrl$condition_treatment, levels = c("2_low", "1_normal", "3_high"),
+                                      labels = c("Notch off", "ground state", "Notch on"))
+treatment <- as.character(treatment_factor)
+treatment_col <- treatment_colors[levels(treatment_factor)]
+
+col_fun = colorRamp2(c(-10, 0, 10), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          #`Library Prep` = lib_prep,
+                                          #`Cell line` = cell_line,
+                                          `Time point` = treatment_time,
+                                          Treatment = treatment,
+                                          col = list(Subtype = Subtype_col,
+                                                     #`Library Prep` = lib_prep_col,
+                                                     #`Cell line` = cell_line_col,
+                                                     `Time point` = treatment_time_col,
+                                                     Treatment = treatment_col),
+                                          annotation_name_side = "right")
+
+ht <- Heatmap(cpm_top,
+        column_title = "Top 1000 variant genes in the breast cancer cell lines",
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        col = col_fun,  
+        show_row_names = FALSE,
+        show_column_names = TRUE,
+        column_names_gp = gpar(fontsize = 4),
+        top_annotation = col_ha,
+        heatmap_legend_param = list(
+           title = "log2[cpm]"#,
+           #title_position = "lefttop-rot"
+           )
+        )
+
+draw(ht)
+# , merge_legend = TRUE, adjust_annotation_extension = TRUE
+```
+
+### 8h treatment only
+
+```{r 4f-top-variant-genes-8h, fig.width=8, fig.height=7, dev='png'}
+
+ntop <- order(matrixStats::rowVars(limma.cpm$E[,qnt.met_no_ctrl$condition_time == "8h"]), decreasing = TRUE)[1:1000]
+cpm_top <- limma.cpm$E[ntop,qnt.met_no_ctrl$condition_time == "8h"]
+colnames(cpm_top) <- qnt.met_no_ctrl$condition_cell_line[qnt.met_no_ctrl$condition_time == "8h"][colnames(cpm_top) %in% qnt.met_no_ctrl$sample_name]
+
+Subtype <- as.character(qnt.met_no_ctrl$condition_subtype[qnt.met_no_ctrl$condition_time == "8h"])
+Subtype_col <- subtype_colors[levels(qnt.met_no_ctrl$condition_subtype[qnt.met_no_ctrl$condition_time == "8h"])]
+
+# lib_prep <- as.character(qnt.met_no_ctrl$condition_lib_prep)[qnt.met_no_ctrl$condition_time == "8h"]
+# lib_prep_col <- merck_colors[c(6,9)]
+# names(lib_prep_col) = unique(lib_prep)
+# 
+# cell_line <- as.character(qnt.met_no_ctrl$condition_cell_line)[qnt.met_no_ctrl$condition_time == "8h"]
+# cell_line_col <- merck_colors_ext(1:length(unique(cell_line)))
+# names(cell_line_col) = unique(cell_line)
+
+treatment_factor <- factor(qnt.met_no_ctrl$condition_treatment, levels = c("2_low", "1_normal", "3_high"),
+                                      labels = c("Notch off", "ground state", "Notch on"))[qnt.met_no_ctrl$condition_time == "8h"]
+treatment <- as.character(treatment_factor)
+treatment_col <- treatment_colors[levels(treatment_factor)]
+
+col_fun = colorRamp2(c(-10, 0, 10), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                         # `Library Prep` = lib_prep,
+                                         # `Cell line` = cell_line,
+                                          Treatment = treatment,
+                                          col = list(Subtype = Subtype_col,
+                                                     #`Library Prep` = lib_prep_col,
+                                                     #`Cell line` = cell_line_col,
+                                                     Treatment = treatment_col),
+                                          annotation_name_side = "right")
+
+ht <- Heatmap(cpm_top,
+        column_title = "Top 1000 variant genes in the breast cancer cell lines (8h treated)",
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        col = col_fun,  
+        show_row_names = FALSE,
+        show_column_names = TRUE,
+        column_names_gp = gpar(fontsize = 6),
+        top_annotation = col_ha,
+        heatmap_legend_param = list(
+           title = "Fold-Change"#,
+           #title_position = "lefttop-rot"
+           )
+        )
+
+draw(ht)
+
+```
+
+### 72h treatment only
+
+```{r 4g-top-variant-genes-72h, fig.width=8, fig.height=7, dev='png'}
+
+
+ntop <- order(matrixStats::rowVars(limma.cpm$E[,qnt.met_no_ctrl$condition_time == "72h"]), decreasing = TRUE)[1:1000]
+cpm_top <- limma.cpm$E[ntop,qnt.met_no_ctrl$condition_time == "72h"]
+colnames(cpm_top) <- qnt.met_no_ctrl$condition_cell_line[qnt.met_no_ctrl$condition_time == "72h"][colnames(cpm_top) %in% qnt.met_no_ctrl$sample_name]
+
+Subtype <- as.character(qnt.met_no_ctrl$condition_subtype[qnt.met_no_ctrl$condition_time == "72h"])
+Subtype_col <- subtype_colors[levels(qnt.met_no_ctrl$condition_subtype[qnt.met_no_ctrl$condition_time == "72h"])]
+
+# lib_prep <- as.character(qnt.met_no_ctrl$condition_lib_prep)[qnt.met_no_ctrl$condition_time == "72h"]
+# lib_prep_col <- merck_colors[c(6,9)]
+# names(lib_prep_col) = unique(lib_prep)
+# 
+# cell_line <- as.character(qnt.met_no_ctrl$condition_cell_line)[qnt.met_no_ctrl$condition_time == "72h"]
+# cell_line_col <- merck_colors_ext(1:length(unique(cell_line)))
+# names(cell_line_col) = unique(cell_line)
+
+treatment_factor <- factor(qnt.met_no_ctrl$condition_treatment, levels = c("2_low", "1_normal", "3_high"),
+                                      labels = c("Notch off", "ground state", "Notch on"))[qnt.met_no_ctrl$condition_time == "72h"]
+treatment <- as.character(treatment_factor)
+treatment_col <- treatment_colors[levels(treatment_factor)]
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                         # `Library Prep` = lib_prep,
+                                         # `Cell line` = cell_line,
+                                          Treatment = treatment,
+                                          col = list(Subtype = Subtype_col,
+                                                     #`Library Prep` = lib_prep_col,
+                                                     #`Cell line` = cell_line_col,
+                                                     Treatment = treatment_col),
+                                          annotation_name_side = "right")
+
+ht <- Heatmap(cpm_top,
+        column_title = "Top 1000 variant genes in the breast cancer cell lines (72h treated)",
+        cluster_rows = TRUE,
+        cluster_columns = TRUE,
+        clustering_distance_rows = "euclidean",
+        clustering_distance_columns = "euclidean",
+        col = col_fun,  
+        show_row_names = FALSE,
+        show_column_names = TRUE,
+        column_names_gp = gpar(fontsize = 6),
+        top_annotation = col_ha,
+        heatmap_legend_param = list(
+           title = "Fold-Change"#,
+           #title_position = "lefttop-rot"
+           )
+        )
+
+draw(ht)
+```
+
+# Diagnositic Plots
+
+```{r 06-Diagnostic-Plots, fig.width=8, fig.height=18}
+
+# --- Get TPM Values and exclude QC failed datapoints
+
+qnt.mat_tpm = qnt.tpm                                             %>%
+  dplyr::select(sample_name, gene_symbol, quant_tpm)              %>%
+  dplyr::filter(gene_symbol != '' & !base::is.na(gene_symbol))  %>%
+  dplyr::inner_join(met.lib)  %>% # QC failed are excluded, as they are not in the met.lib file
+  dplyr::left_join(met.sam)                                    %>%
+  dplyr::filter(!sample_name %in% !!met.fail) # should already been excluded above, double is better
+  
+# subset for the cell lines included:
+
+qnt.mat_tpm <- qnt.mat_tpm %>% 
+  dplyr::filter(condition_cell_line %in% !!unique(as.character(qnt.met_no_ctrl$condition_cell_line)))
+
+qnt.mat_tpm_agg <- qnt.mat_tpm %>%
+  dplyr::group_by(sample_name, gene_symbol) %>%
+  dplyr::summarise(quant_tpm = sum(quant_tpm)) %>%
+  dplyr::ungroup()
+
+qnt.mat_tpm_agg_log2 <- qnt.mat_tpm_agg %>%
+  mutate(quant_log2tpm = log2(quant_tpm+1))
+
+qnt.mat_tpm_agg_log2 <- qnt.mat_tpm_agg_log2 %>%
+  left_join(qnt.mat_tpm %>%
+              dplyr::select(-quant_tpm) %>%
+              distinct(),
+            by = c("sample_name", "gene_symbol"))
+
+############################# Diagnostic Plots ############################# 
+
+plotdata <- qnt.mat_tpm_agg_log2 %>%
+  inner_join(qnt.met %>% dplyr::select(sample_name, condition_subtype),
+             by = c("sample_name")) %>%
+  filter(gene_symbol == "HEY1") %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+      condition_treatment,
+      `FC`   = 'ground state',
+      `FC + DAPT`      = 'Notch off',
+      `Jagged1`     = 'Notch on',
+      `Jagged1 + DAPT`  = 'Notch on/off ctrl'))
+  ggplot(plotdata,
+         aes(y = quant_log2tpm,
+             x = condition_treatment,
+             color = condition_time,
+             group = condition_time)) +
+  theme_pubclean() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  ylim(c(0,range(plotdata$quant_log2tpm)[2])) +
+  facet_wrap(condition_cell_line~condition_subtype, ncol=4,
+             scales = "free")+
+  labs(title = "HEY1",
+       x = "Condition",
+       y = "log(TPM+1)") +
+  scale_color_manual(values = time_colors[levels(factor(plotdata$condition_time))])
+
+plotdata <- qnt.mat_tpm_agg_log2 %>%
+  inner_join(qnt.met %>% dplyr::select(sample_name, condition_subtype),
+             by = c("sample_name")) %>%
+  filter(gene_symbol == "HES1")  %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+      condition_treatment,
+      `FC`   = 'ground state',
+      `FC + DAPT`      = 'Notch off',
+      `Jagged1`     = 'Notch on',
+      `Jagged1 + DAPT`  = 'Notch on/off ctrl')) 
+  ggplot(plotdata,
+         aes(y = quant_log2tpm,
+             x = condition_treatment,
+             color = condition_time,
+             group = condition_time)) +
+  theme_pubclean() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  ylim(c(0,range(plotdata$quant_log2tpm)[2])) +
+  facet_wrap(condition_cell_line~condition_subtype, ncol=4,
+             scales = "free")+
+  labs(title = "HES1",
+       x = "Condition",
+       y = "log(TPM+1)") +
+  scale_color_manual(values = time_colors[levels(factor(plotdata$condition_time))])
+
+
+plotdata <- qnt.mat_tpm_agg_log2 %>%
+  inner_join(qnt.met %>% dplyr::select(sample_name, condition_subtype),
+             by = c("sample_name")) %>%
+  filter(gene_symbol == "NRARP")  %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+      condition_treatment,
+      `FC`   = 'ground state',
+      `FC + DAPT`      = 'Notch off',
+      `Jagged1`     = 'Notch on',
+      `Jagged1 + DAPT`  = 'Notch on/off ctrl'))
+  ggplot(plotdata,
+         aes(y = quant_log2tpm,
+             x = condition_treatment,
+             color = condition_time,
+             group = condition_time)) +
+  theme_pubclean() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  ylim(c(0,range(plotdata$quant_log2tpm)[2])) +
+  facet_wrap(condition_cell_line~condition_subtype, ncol=4,
+             scales = "free")+
+  labs(title = "NRARP",
+       x = "Condition",
+       y = "log(TPM+1)") +
+  scale_color_manual(values = time_colors[levels(factor(plotdata$condition_time))])
+
+```
+
+# Normal NOTCH receptor expression in the tested cell lines
+
+## Notch expression heatmap 8h + 72h
+
+```{r 08a-notch-expression-hm, fig.height=3.2, fig.width=8}
+
+# notch receptor expression in the cell lines
+
+normal_samples <- qnt.met %>% filter(condition_treatment %in% c("1_normal")) %>%
+  arrange(condition_cell_line) %>% pull(sample_name) %>% as.character
+
+notch_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("NOTCH1","NOTCH2","NOTCH3","NOTCH4")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line, condition_time,condition_subtype) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_notch_expression <- notch_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+Subtype <- as.character(notch_expression[,c("condition_cell_line", "condition_time", "condition_subtype")] %>% distinct() %>% pull("condition_subtype"))
+
+Subtype_col <- subtype_colors[unique(Subtype)]
+
+Timepoint <- as.character(notch_expression[,c("condition_cell_line", "condition_time", "condition_subtype")] %>% distinct() %>% pull("condition_time"))
+
+Timepoint_col <- time_colors[unique(Timepoint)]
+
+col_fun = colorRamp2(c(-1, 0, 1), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          Timepoint = Timepoint,
+                                          col = list(Subtype = Subtype_col,
+                                                     Timepoint = Timepoint_col
+                                                     ), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = notch_expression %>% filter(gene_symbol == "NOTCH1") %>% pull(condition_subtype) %>% as.vector,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        column_title_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          Timepoint = Timepoint,
+                                          col = list(Subtype = Subtype_col,
+                                                     Timepoint = Timepoint_col
+                                                     ), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                          )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = TRUE,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        column_title_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+                        )
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+```
+
+## Notch Expression Heatmap 72h
+
+```{r 09b-notch-expression-hm-72h, fig.height=2.5, fig.width=5}
+
+notch_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  filter(condition_time == "72h") %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("NOTCH1","NOTCH2","NOTCH3","NOTCH4")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line,condition_subtype) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line)
+
+matrix_notch_expression <- notch_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+Subtype <- as.character(notch_expression[,c("condition_cell_line", "condition_subtype")] %>% distinct() %>% pull("condition_subtype"))
+
+Subtype_col <- subtype_colors[unique(Subtype)]
+
+col_fun = colorRamp2(c(-1, 0, 1), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          col = list(Subtype = Subtype_col), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = notch_expression %>% filter(gene_symbol == "NOTCH1") %>% pull(condition_subtype) %>% as.vector,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        column_title_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legend = TRUE)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          col = list(Subtype = Subtype_col), 
+                                          #annotation_name_side = "left",
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")#,
+                                           # Cellline = list(nrow = 4)
+                                          )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = TRUE,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        column_title_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+                        )
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legend = TRUE)
+```
+
+## Endocrine receptor status of cell lines - 8h + 72h
+
+```{r 09c-receptors-expression-hm, fig.height=3, fig.width=8}
+
+receptor_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("ERBB2","ERBB3","ESR1","PGR","AR")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line, condition_time,condition_subtype) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_receptor_expression <- receptor_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+
+Subtype <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_subtype")] %>% distinct() %>% pull("condition_subtype"))
+
+Subtype_col <- subtype_colors[unique(Subtype)]
+
+Timepoint <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_subtype")] %>% distinct() %>% pull("condition_time"))
+
+Timepoint_col <- time_colors[unique(Timepoint)]
+
+col_fun = colorRamp2(c(-1, 0, 1), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          Timepoint = Timepoint,
+                                          col = list(Subtype = Subtype_col,
+                                                     Timepoint = Timepoint_col), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_receptor_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = receptor_expression %>% filter(gene_symbol == "ESR1") %>% pull(condition_subtype) %>% as.vector,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+```
+
+## Endocrine receptor status of cell lines - 72h
+
+```{r 09d-receptors-expression-hm-72h, fig.height=2.5, fig.width=5}
+
+receptor_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  filter(condition_time == "72h") %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("ERBB2","ERBB3","ESR1","PGR","AR")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line,condition_subtype) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line)
+
+matrix_receptor_expression <- receptor_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+
+Subtype <- as.character(receptor_expression[,c("condition_cell_line", "condition_subtype")] %>% distinct() %>% pull("condition_subtype"))
+
+Subtype_col <- subtype_colors[unique(Subtype)]
+
+col_fun = colorRamp2(c(-1, 0, 1), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          col = list(Subtype = Subtype_col), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_receptor_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = receptor_expression %>% filter(gene_symbol == "ESR1") %>% pull(condition_subtype) %>% as.vector,
+                        row_title_rot = 90,
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+draw(ht, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+```
+
+### Add mutations
+
+```{r 09e-receptors-expression-hm, fig.height=2.5, fig.width=5}
+
+# load wikipathway notch
+# Wikipathway
+
+wikipathway_genes <- msigdbr::msigdbr(species = "Homo sapiens", category = "C2", subcategory = "CP:WIKIPATHWAYS")
+
+# wikipathway_genes <- clusterProfiler::read.gmt("../../../Datasets/Genesets/wikipathways-20200810-gmt-Homo_sapiens.gmt")
+
+# filter notch terms, use Notch Signaling (homo sapiens)
+
+notch_pathways <- wikipathway_genes %>%
+  dplyr::filter(grepl("WP_NOTCH_SIGNALING$", gs_name, ignore.case = TRUE))
+
+notch_pathways_genes_entrez <- unique(notch_pathways$human_entrez_gene) 
+
+notch_pathways_genes_symbol <-clusterProfiler::bitr(notch_pathways_genes_entrez, fromType="ENTREZID", toType="SYMBOL", OrgDb="org.Hs.eg.db")
+
+notch_pathways_genes_symbol <- unique(notch_pathways_genes_symbol$SYMBOL)
+
+### CCLE phenotype data
+# Phenotype data were downloaded from depmap-CCLE (21q1)
+# https://depmap.org/portal/download/all/
+
+CCLE_sample_info_21Q1 <- read_csv("../../..//Datasets/Cell Lines/CCLE/CCLE_sample_info_21Q1.csv")
+
+# subset to used cell lines
+
+qnt.mat_tpm_agg_log2$stripped_cell_line_name <- str_remove(toupper(qnt.mat_tpm_agg_log2$condition_cell_line), "-")
+
+qnt.mat_tpm_agg_log2 <- qnt.mat_tpm_agg_log2 %>%
+  left_join(CCLE_sample_info_21Q1 %>%
+              dplyr::select(stripped_cell_line_name, DepMap_ID),
+            by = "stripped_cell_line_name")
+
+CCLE_sample_info_21Q1_used <- unique(qnt.mat_tpm_agg_log2$DepMap_ID) %>%
+  na.omit()
+
+### mutation data
+
+CCLE_mutations_csv_21Q1 <- read_csv("../../../Datasets/Cell Lines/CCLE/CCLE_mutations.csv_21Q1.csv")
+
+# remove silent, keep only cell lines of screen
+CCLE_mutations_csv_21Q1 <- CCLE_mutations_csv_21Q1 %>%
+  dplyr::filter(Variant_annotation != "silent",
+                DepMap_ID %in% !!CCLE_sample_info_21Q1_used)
+
+# filter notch mutations:
+
+notch_CCLE_mutations_csv_21Q1 <- CCLE_mutations_csv_21Q1 %>%
+  dplyr::filter(Entrez_Gene_Id %in% !!unique(notch_pathways$human_entrez_gene))
+
+# if variant_protein is NA -> take variant_genome and variant_consequence
+
+notch_CCLE_mutations_csv_21Q1$variant <- ifelse(is.na(notch_CCLE_mutations_csv_21Q1$Protein_Change), 
+                                               paste0(notch_CCLE_mutations_csv_21Q1$Variant_Classification,"(", notch_CCLE_mutations_csv_21Q1$Genome_Change, ")"),
+                                               notch_CCLE_mutations_csv_21Q1$Protein_Change)
+
+notch_CCLE_mutations_csv_21Q1 <- notch_CCLE_mutations_csv_21Q1 %>% 
+  dplyr::select(c("variant", "Hugo_Symbol", "DepMap_ID"))
+
+# Aggregate multiple mutations per gene into one string:
+
+notch_CCLE_mutations_csv_21Q1_agg <- aggregate(variant ~ Hugo_Symbol + DepMap_ID, 
+                                              data = notch_CCLE_mutations_csv_21Q1, 
+                                              FUN = function(x) paste(unique(x), collapse=", "))
+
+notch_CCLE_mutations_csv_21Q1_wide <- pivot_wider(notch_CCLE_mutations_csv_21Q1_agg,
+                                      names_from = Hugo_Symbol,
+                                      names_prefix = "mutated_",
+                                      values_from = variant)
+
+notch_CCLE_mutations_csv_21Q1_wide <- data.frame(DepMap_ID = CCLE_sample_info_21Q1_used,
+           stringsAsFactors = FALSE) %>%
+  left_join(notch_CCLE_mutations_csv_21Q1_wide)
+
+# replace detailed mutations:
+
+notch_CCLE_mutations_csv_21Q1_wide <- notch_CCLE_mutations_csv_21Q1_wide %>%
+  mutate_at(vars(matches("mutated_")), function(x) ifelse(is.na(x), "wt", x))
+
+notch_CCLE_mutations_csv_21Q1_long <- notch_CCLE_mutations_csv_21Q1_wide %>%
+  pivot_longer(-DepMap_ID,
+               names_to = "gene_symbol",
+               values_to = "mutation",
+               names_prefix = "mutated_") %>%
+  left_join(qnt.mat_tpm_agg_log2 %>%
+              dplyr::select(stripped_cell_line_name, DepMap_ID) %>%
+              dplyr::distinct())
+
+```
+
+```{r 09f-receptors-expression-hm, fig.height=6, fig.width=12}
+
+receptor_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("ERBB2","ERBB3","ESR1","PGR","AR")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line, condition_subtype, condition_time) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_receptor_expression <- receptor_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+notch_expression <- qnt.mat_tpm_agg_log2 %>%
+  filter(sample_name %in% qnt.met$sample_name) %>%
+  left_join(qnt.met %>% dplyr::select(sample_name,condition_subtype),
+            by = "sample_name") %>% 
+  filter(condition_treatment == "FC") %>%
+  filter(gene_symbol %in% c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4")) %>%
+  dplyr::select(gene_symbol, quant_log2tpm, condition_cell_line, condition_subtype, condition_time) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_notch_expression <- notch_expression %>% 
+  dplyr::select(-condition_subtype) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time),
+                     values_from = quant_log2tpm) %>%
+  column_to_rownames("gene_symbol") %>%
+  t() %>%
+  scale() %>%
+  t()
+
+
+notch_CCLE_mutations_csv_21Q1_long[notch_CCLE_mutations_csv_21Q1_long[,"stripped_cell_line_name"] == "MCF7","stripped_cell_line_name"] <- "MCF-7"
+notch_CCLE_mutations_csv_21Q1_long[notch_CCLE_mutations_csv_21Q1_long[,"stripped_cell_line_name"] == "HS578T","stripped_cell_line_name"] <- "HS578t"
+
+notch_CCLE_mutations_use_wide <- notch_expression %>%
+  dplyr::select(-gene_symbol, -quant_log2tpm) %>%
+  dplyr::distinct() %>%
+  left_join(notch_CCLE_mutations_csv_21Q1_long %>%
+    dplyr::select(-DepMap_ID),
+    by = c("condition_cell_line" = "stripped_cell_line_name")) %>%
+  arrange(gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+  
+
+xlsx::write.xlsx(notch_CCLE_mutations_use_wide %>%
+                   dplyr::select(-condition_time) %>%
+                   dplyr::distinct() %>%
+                   pivot_wider(names_from = gene_symbol,
+                               values_from = mutation),
+                 file = "NOTCH_pathway_mutations.xlsx")
+
+matrix_notch_mutation <- notch_expression %>% 
+  dplyr::select(-condition_subtype, -gene_symbol, -quant_log2tpm) %>%
+  dplyr::left_join(notch_CCLE_mutations_use_wide) %>% 
+  dplyr::select(-condition_subtype) %>%
+  dplyr::distinct() %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time),
+                     values_from = mutation) %>%
+  dplyr::filter(!is.na(gene_symbol)) %>%
+  column_to_rownames("gene_symbol")
+
+matrix_notch_mutation <- matrix_notch_mutation[c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4"),colnames(matrix_receptor_expression)]
+
+# header
+
+Subtype <- as.character(receptor_expression[,c("condition_cell_line", "condition_subtype", "condition_time")] %>% distinct() %>% pull("condition_subtype"))
+Subtype_col <- subtype_colors[unique(Subtype)]
+
+Timepoint <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_subtype")] %>% distinct() %>% pull("condition_time"))
+Timepoint_col <- time_colors[unique(Timepoint)]
+
+col_fun = colorRamp2(c(-1, 0, 1), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          Timepoint = Timepoint,
+                                          col = list(Subtype = Subtype_col,
+                                                     Timepoint = Timepoint_col), 
+                                          #annotation_name_side = "left",
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+col_split <- receptor_expression %>% filter(gene_symbol == "ESR1") %>% pull(condition_subtype) %>% as.vector
+
+ht <- ComplexHeatmap::Heatmap(matrix_receptor_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = col_split,
+                        row_title = "Expression of\nEndocrine\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          #title_position = "leftcenter-rot",
+                          direction = "horizontal")
+)
+
+ht2 <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = col_split,
+                        row_title = "Expression of\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        show_heatmap_legend = FALSE,
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+mutation_names <- unique(unlist(matrix_notch_mutation))
+mutation_names <- mutation_names[!is.na(mutation_names)]
+
+col_mut = c("lightgrey",merck_colors[1:(length(mutation_names)-1)])
+names(col_mut) <- mutation_names
+
+
+ht3 <- ComplexHeatmap::Heatmap(matrix_notch_mutation,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        column_split  = col_split,
+                        row_title = "Mutations in\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        show_column_names = TRUE,
+                        col = col_mut,
+                        na_col = "white",
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "NOTCH Mutations", 
+                          title_position = "leftcenter-rot")
+                        
+)
+
+draw(ht %v% ht2 %v% ht3, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+```
+
+
+
+## Boxplots Notch receptor expression according to PAM50 expression subtype
+
+```{r 10-notch-expression-per-cell-line, fig.width=3, fig.height=4}
+
+# Kruskal-Wallis Test
+
+res.kruskal <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH1") %>% 
+  kruskal_test(quant_log2tpm ~ condition_subtype)
+
+# Pairwise comparisons
+pwc <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH1") %>% 
+  dunn_test(quant_log2tpm ~ condition_subtype, p.adjust.method = "bonferroni") 
+
+pwc <- pwc %>% add_xy_position(x = "condition_subtype")
+
+ggboxplot(notch_expression %>% dplyr::filter(gene_symbol == "NOTCH1"),
+          y = "quant_log2tpm",
+          x = "condition_subtype",
+          fill = "condition_subtype",
+          palette = subtype_colors[notch_expression %>% pull(condition_subtype) %>% levels],
+          xlab = "PAM50 subtypes",
+          ylab = "log2(TPM+1)",
+          ylim = c(0,9),
+          title = "NOTCH1") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(
+    subtitle = get_test_label(res.kruskal, detailed = TRUE),
+    caption = get_pwc_label(pwc)
+    ) + 
+  theme(legend.position = "none",
+        plot.subtitle = element_text(size = 8))
+           
+# Kruskal-Wallis Test
+
+res.kruskal <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH2") %>% 
+  kruskal_test(quant_log2tpm ~ condition_subtype)
+
+# Pairwise comparisons
+pwc <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH2") %>% 
+  dunn_test(quant_log2tpm ~ condition_subtype, p.adjust.method = "bonferroni") 
+
+pwc <- pwc %>% add_xy_position(x = "condition_subtype")
+
+
+ggboxplot(notch_expression %>% dplyr::filter(gene_symbol == "NOTCH2"),
+          y = "quant_log2tpm",
+          x = "condition_subtype",
+          fill = "condition_subtype",
+          palette = subtype_colors[notch_expression %>% pull(condition_subtype) %>% levels],
+          xlab = "PAM50 subtypes",
+          ylab = "log2(TPM+1)",
+          ylim = c(0,9),
+          title = "NOTCH2") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(
+    subtitle = get_test_label(res.kruskal, detailed = TRUE),
+    caption = get_pwc_label(pwc)
+    ) + 
+  theme(legend.position = "none",
+        plot.subtitle = element_text(size = 8))
+
+# Kruskal-Wallis Test
+
+res.kruskal <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH3") %>% 
+  kruskal_test(quant_log2tpm ~ condition_subtype)
+
+# Pairwise comparisons
+pwc <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH3") %>% 
+  dunn_test(quant_log2tpm ~ condition_subtype, p.adjust.method = "bonferroni") 
+
+pwc <- pwc %>% add_xy_position(x = "condition_subtype")
+
+
+ggboxplot(notch_expression %>% dplyr::filter(gene_symbol == "NOTCH3"),
+          y = "quant_log2tpm",
+          x = "condition_subtype",
+          fill = "condition_subtype",
+          palette = subtype_colors[notch_expression %>% pull(condition_subtype) %>% levels],
+          xlab = "PAM50 subtypes",
+          ylab = "log2(TPM+1)",
+          ylim = c(0,9),
+          title = "NOTCH3") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(
+    subtitle = get_test_label(res.kruskal, detailed = TRUE),
+    caption = get_pwc_label(pwc)
+    ) + 
+  theme(legend.position = "none",
+        plot.subtitle = element_text(size = 8))
+
+# Kruskal-Wallis Test
+
+res.kruskal <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH4") %>% 
+  kruskal_test(quant_log2tpm ~ condition_subtype)
+
+# Pairwise comparisons
+pwc <- notch_expression %>% dplyr::filter(gene_symbol == "NOTCH4") %>% 
+  dunn_test(quant_log2tpm ~ condition_subtype, p.adjust.method = "bonferroni") 
+
+pwc <- pwc %>% add_xy_position(x = "condition_subtype")
+
+
+ggboxplot(notch_expression %>% dplyr::filter(gene_symbol == "NOTCH4"),
+          y = "quant_log2tpm",
+          x = "condition_subtype",
+          fill = "condition_subtype",
+          palette = subtype_colors[notch_expression %>% pull(condition_subtype) %>% levels],
+          xlab = "PAM50 subtypes",
+          ylab = "log2(TPM+1)",
+          title = "NOTCH4") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(
+    subtitle = get_test_label(res.kruskal, detailed = TRUE),
+    caption = get_pwc_label(pwc)
+    ) + 
+  theme(legend.position = "none",
+        plot.subtitle = element_text(size = 8))
+
+
+```
+
+
+```{r}
+# Save everything needed:
+
+save(qnt.mat_tpm_agg_log2,
+     limma.cpm,
+     limma.cor,
+      limma.des, 
+      limma.fac,
+      qnt.met,
+      qnt.met_no_ctrl, 
+      qnt.mat_no_ctrl, 
+      qnt.ann2, 
+     met.sub,
+      file = "../RData/Part4.RData")
+
+saveRDS(qnt.mat_tpm_agg_log2,
+        "../data/BRCA_TPM.rds")
+
+save(limma.cpm,
+     limma.cor,
+      limma.des, 
+      limma.fac,
+       file=  "../data/BRCA_limma.RData")
+
+```
+
+# Discussion of the Results and Recommendations
+
+The TPM expression table as well as the differential expression data has been exported for further analysis.  
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

@@ -1,0 +1,1489 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 3 - Published NOTCH signatures"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part3.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  # 4 inch high, 6 inch wide
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part3/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, results = 'hide', message = FALSE, warning=FALSE}
+
+library(tidyverse)
+
+library(readxl)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(circlize)
+library(ggthemes)
+
+library(DESeq2)
+# library(edgeR)
+library(pbapply)
+
+library(ggcorrplot)
+library(cowplot)
+
+library(rmarkdown)
+library(DT)
+
+library(clusterProfiler)
+library(ComplexHeatmap)
+library(enrichplot)
+
+library(msigdbr)
+
+library(ProfilerAPI2)
+# library(xopdata) # use update gene symbols functionality
+# 
+# xopdata_src <- xopdata::get_src()
+
+# Citations:
+
+knitr::write_bib(file = '../src/part3.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+*Treatments:*  
+
+* normal (no treatment): "FC"
+* NOTCH ON (cultured on immobilised Jagged1 ligand): "Jagged1"
+* NOTCH OFF (blocked with GSI): "DAPT"
+
+Of special interest: Jagged1 (NOTCH high) vs. DAPT (NOTCH low)  
+
+</div>
+  
+**Methods**
+
+We will test various approaches to identify signatures that may:  
+
+* indicate NOTCH activation status
+  + Use full DESeq2 differential expression results and use a stringend fold-change and p-value cutoff
+  + Use the 8h and 72h differential expression results seperately and only use the overlap of differentially expressed genes. This approach is more robust, as the resulting genes need to be up/down-regulated in each time point. In the full model due to mean parametrization, selected genes could be high/low in one of the time points only.  
+
+This is the manual signature identification approach by selecting manual fold change cutoffs:
+
+* The resulting signature should be between 3 and 20 genes and fold change cutoffs are applied accordingly.  
+
+**Conclusion**  
+
+<div class = "box">
+
+From the 20 signatures that were selected by literature search 15 qualified and from the MSIGDB signature data base with the term NOTCH in the name of the signature 42 of 51 remained. So in total, 57 public signatures were subsequently analyzed.  
+
+When performing GSEA on the public signatures and the training cohort, only 20 of the 57 signatures showed significant enrichment.  
+
+Calculating the coherence score and empirical P value for the signatures, only 15 showed a coherence score > 0.1 and an empirical P value < 0.05. For Metabric it were 9, for Oslo2 only 7 signatures.  
+When applying a stricter P-Value cutoff (e.g. 0.001), the we only have 13, 8 and 4 significant signatures.  
+This analysis emphasizes, that many published signatures for the NOTCH pathway do not evaluate modulation of the pathway in the breast cancer setting.  
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].
+Data was sourced from the X-Omics Platform using the `ProfilerAPI2` [@R-ProfilerAPI2] and `xopdata` [@R-xopdata]. Communication with excel files was performed using the `xlsx` package [@R-xlsx]. 
+
+**Expression Profiling**  
+The RNASeq data set and data from public ressources was analyzed using `DESeq2` [@R-DESeq2] and `edgeR` [@R-edgeR]. The apply function was parallelized using `pbapply` [@R-pbapply].
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], `ggrepel` [@R-ggrepel] and `cowplot` [@R-cowplot].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT]. Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].    
+
+**Signature Selection**  
+The visualisation of the correlation matrix was performed by `ggcorrplot` [@R-ggcorrplot].  
+
+**Gene set enrichment analysis (GSEA)**  
+GSEA was performed by the `fgsea` implementation in `clusterProfiler` [@R-clusterProfiler] and visualized by `enrichplot` [@R-enrichplot].  
+
+# Experimental Data Import
+
+We import the data of the analysis of both timepoints (8h and 72h) together, as well as the analyses for each timepoint seperately.  
+
+```{r 02-load-data}
+
+base::load("../RData/Part2.RData")
+
+# the best signature was signature 3, we will make use of that one and rename it to: Notch_20-gene_signature 
+
+gene_set_list_opt_notch <- gene_set_list_opt_notch["signature_11"]
+names(gene_set_list_opt_notch) <- "Notch 20-Gene Signature"
+
+```
+
+## Public Data Sources
+
+```{r 03-Data-Sources}
+
+format_category <- function(x) {
+  x <- stringr::str_replace_all(x, "\\|", "<br /><strong>")
+  x <- paste0("<strong>",x)
+  x <- stringr::str_replace_all(x, "\\:", "\\:</strong> ")
+  x <- stringr::str_replace_all(x, "_", " ")
+  x
+}
+
+# Internal Access to Data Lake
+# Data sets as described in the manuscript
+
+api = ProfilerAPI2::profiler_api(profile = "myprofile")   ## needed for Rmarkdown connection to ProfilerAPI2
+con <- api$conn
+
+# TCGA
+
+id_xena_tcga <- "xena_tcga_rna_wts_gexp_20q1_prod_schelhorn_3"
+
+merck_tcga_rna_wtstmm_gexp_source <- api$conn %>%
+  tbl(id_xena_tcga) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  pull(meta_source) %>% 
+  unique
+
+merck_tcga_rna_wtstmm_gexp_transformation <- api$conn %>%
+  tbl(id_xena_tcga) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  pull(meta_measurement) %>% 
+  unique
+
+Data_Sources <- data.frame(Type = "TCGA Expression Data",
+                           Source = paste0(format_category(merck_tcga_rna_wtstmm_gexp_source),"<br /> "),
+                           Measurement = paste0(format_category(merck_tcga_rna_wtstmm_gexp_transformation),"<br /><hr /> ")
+                           )
+
+# METABRIC
+
+id_metabric <- "cbioportal_metabric_rna_microarray_gexp_22q1_prod_geist_0"
+
+metabric_source <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  dplyr::filter(id_patient_id == "MB-5452") %>% 
+  dplyr::select(meta_source, meta_measurement) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "METABRIC",
+               Source = paste0(format_category(metabric_source$meta_source),"<br /> "),
+               Measurement = paste0(format_category(metabric_source$meta_measurement),"<br /><hr /> "))
+  )
+
+# Oslo2
+
+id_oslo2 <- "gse80999_oslo2_rna_microarray_gexp_22q1_prod_geist_2"
+
+oslo2_source <- api$conn %>%
+  tbl(id_oslo2) %>%
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  #dplyr::filter(id_patient_id == "GSM1403854") %>% 
+  dplyr::select(meta_source, meta_measurement) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2",
+               Source = paste0(format_category(oslo2_source$meta_source),"<br /> "),
+               Measurement = paste0(format_category(oslo2_source$meta_measurement),"<br /><hr /> "))
+  )
+
+
+knitr::kable(Data_Sources,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+### --- Data sets already loaded 
+
+### --- update gene symbols
+
+### --- Genesets:
+
+updated_gene_list <- lapply(gene_set_list_opt_notch, function(x) xopdata::genes2approved(x, na_duplicates = T))
+
+# identical(updated_gene_list, gene_set_list_opt_notch)
+# TRUE
+
+### --- update all genes in colnames of patient datasets:
+
+### --- METABRIC
+
+metabric_gene_names <- data.frame(old_names = colnames(metabric_gene_expession_data_scaled_wide_full),
+                                  new_names = xopdata::genes2approved(colnames(metabric_gene_expession_data_scaled_wide_full), na_duplicates = F))
+
+# any(duplicated(metabric_gene_names$new_names))
+# FALSE
+# any(is.na(metabric_gene_names$new_names))
+# FALSE
+
+colnames(metabric_gene_expession_data_scaled_wide_full) <- metabric_gene_names$new_names
+
+### --- Oslo2
+
+oslo2_gene_names <- data.frame(old_names = colnames(Oslo2_gene_expession_data_wide_full),
+                                  new_names = xopdata::genes2approved(colnames(Oslo2_gene_expession_data_wide_full), na_duplicates = F))
+
+# any(duplicated(oslo2_gene_names$new_names))
+# FALSE
+# any(is.na(oslo2_gene_names$new_names))
+# FALSE
+
+colnames(Oslo2_gene_expession_data_wide_full) <- oslo2_gene_names$new_names
+
+########################################################################################
+
+gene_set_list_opt_notch_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gene_set_list_opt_notch)){
+  gene_set_list_opt_notch_list <- bind_rows(gene_set_list_opt_notch_list,
+                                            data.frame(gs_name = names(gene_set_list_opt_notch[i]),
+                                                       gene_symbol = gene_set_list_opt_notch[[i]]))
+  
+}
+
+```
+
+# Incorporate selected published Notch activation / repression signatures
+
+Following is a list of data sets that used CHiP Seq to identify Notch target genes. We will make use of these Notch regulated genes to:  
+1. Validate the experimental setting (do we see enrichment of these genes in our differentially expressed genes?)
+2. Compare our derived signatures in validation data sets using coherence scores  
+
+## Signatures from Publications:  
+
+|Organism | tissue type | link | publication |
+|---------|-------------|-------|------------|
+|human | TNBC + ACC | https://cancerdiscovery.aacrjournals.org/content/4/10/1154.long | Stoeck et al., 2014 |
+|human | TNBC | https://www.sciencedirect.com/science/article/pii/S2213671116000850 | Braune et al., 2016 |
+|human | Huvec cells | https://www.ahajournals.org/doi/10.1161/ATVBAHA.117.310388 | Poulsen et al., 2018 |
+|human | MDAMB231 | https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5666606/ | Xu et al., 2017 |
+|human | skin cance cell lines | https://www.ncbi.nlm.nih.gov/pmc/articles/PMC5983322/ | Labban et al., 2018 |
+|human | MCF-7 + MDA-MB-231 breast cancer cells | https://breast-cancer-research.biomedcentral.com/articles/10.1186/s13058-018-1020-0 | Leontovich et al., 2018 |
+|human / mouse | T-lymphoblastic leukemia | https://www.pnas.org/content/108/36/14908 | Wang et al., 2011 |
+|mouse | C2C12 cells | http://genesdev.cshlp.org/content/27/9/1059.full | Castel et al., 2013 |
+|mouse | T-cells | https://www.ncbi.nlm.nih.gov/pmc/articles/PMC4654973/ | Pinell et al., 2015 |
+|mouse | brain pericytes | https://www.nature.com/articles/s41467-019-10643-w | Diéguez-Hurtado et al., 2019 |
+|mouse | T-ALL | https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3093658 | Klinakis et al., 2011 |
+
+
+```{r 02-Load-Genesets}
+
+# Basic function to convert mouse to human gene names -> Biomart too often offline...
+# require("biomaRt")
+# human <- useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+# mouse <- useMart("ensembl", dataset = "mmusculus_gene_ensembl")
+#   
+# convertMouseGeneList <- function(x){
+# 
+#   genesV2 <- biomaRt::getLDS(attributes = c("mgi_symbol"),
+#     filters = "mgi_symbol",
+#     values = x,
+#     mart = mouse,
+#     attributesL = c("hgnc_symbol"),
+#     martL = human,
+#     uniqueRows=TRUE)
+# 
+#   human_genes <- unique(genesV2[, 2 ])
+#   
+#   human_genes
+# }
+
+# From: http://www.informatics.jax.org/homology.shtml
+# http://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt
+
+HOM_MouseHumanSequence <- read_delim("../data/HOM_MouseHumanSequence.rpt", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+HOM_MouseHumanSequence <- HOM_MouseHumanSequence %>% 
+  dplyr::select(`DB Class Key`, `Common Organism Name`, Symbol) %>% 
+  dplyr::distinct()
+
+# --- Part 1: Preparation of genesets from literature
+
+# --- Xie et al., 2016 --> Not a real signature, remove
+
+# gs.man = base::data.frame(.identifier_name='RBPJkd_DAPT_Xie_2018',
+#                           gene_symbol=c("RBPJ", "HES1", "HES5", "HEY1", "HEY2", "OLIG1", "OLIG2" ,"ASCL1" ,"FOXM1" ,"MYC", "BUB1", "BUB1B",
+#                                       "CDC20", "CDK1", "CCNA2" , "CCNB2", "CCND2" ,"PLK1" ,"PLK4" ,"KRAS" ,"NEK2"))
+
+# --- Poulsen et al., 2018
+gs.man = base::data.frame(term='Poulsen_2018_N1_supported',
+                          gene_symbol=c('LYPD1', 'ACOT7', "TXNIP", "HES4", "HES1", "HEY2", "TAGLN", "IFI44L", "DKK3", "BMP4",
+                                        "ALPL","RND3","MX1", "SLC30A3", "CCL2", "NREP", "SAT1", "CAP2", "ADGRG6", "ALDH1A1",
+                                        "N4BP2L2", "SPINT2", "CLEC3B", "PTGS2", "MDK", "IFITM1", "FILIP1L", "METTL25", "KLHL13",
+                                        "ACOX2", "FGF2", "DSE", "CEACAM1", "GUCY1A3", "FABP4", "PLAC9", "CDH11", "COBLL1", "HTRA1",
+                                        "CASP1", "ART4", "SELP", "EFNB2", "CFH", "PSMB10", "FOXO3", "PARP12", "GAS6","MAOA","FOXC1",
+                                        "GBP1", "ADGRA2", "STAT1", "ABLIM1", "CPE", "MATN2", "STAT4", "LAP3", "COL8A1", "IL18BP", "GJA4",
+                                        "SLC15A3", "RARRES3", "LEPR", "UBE2L6", "IL33", "SULF1", "LGALS9", "IL18R1", "SLC40A1", "RBP1",
+                                        "VCAM1", "HAPLN3", "TNFSF10"))
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Poulsen_2018_N1_repressed',
+                          gene_symbol=c("CXCR4", "PGF", "TMEM158", "FAM89A", "HLX", "PHLDA1", "CCND1", "C16orf74", "SLC7A5","TRIP13",
+                                        "CKS1B", "NES", "FEN1", "MAD2L1", "SNHG9", "CEP55", "SPOCD1", "ANGPT2", "DDX18", "MELK", "FERMT3",
+                                        "DTYMK", "PLAUR", "TUBB4B", "CXCL8", "RPL39L", "COL13A1", "TUBA1A", "CD276", "LHX6", "LYVE1", "CTHRC1",
+                                        "ABHD17C"))
+)
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Poulsen_2018_HUVEC_NOTCH1_inhibited',
+                          gene_symbol=c("VCAM1", "HEY1", "TNFSF10", "EFNB2", "SMAD6", "CX3CL1", "GSTA4", "LGALS9", "SELENOM", "CPE", "CXCL5")))
+
+
+# --- Xu et al., 2017
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Xu_2017_MDAMB231_RBPJ_targets',
+                          gene_symbol=c("RBPJ", "AKAP2", "APOBEC3B", "APOBEC3C", "ASCC3", "RTCB", "CAPN2", "DNAJC13", "AGO1",
+"AGO2", "AGO3", "FAM120A", "FAM96B", "FBXO42", "GRB2", "GYS1", "HIST1H4G", "HNRNPDL", "HP", "JMJD1C", "KIAA1217", "RBPJ",
+"L3MBTL3", "LGALS1", "MAP1A", "APBA2", "MTPN", "NOTCH2", "OGDH", "PDCD6", "CAVIN1", "RNGTT", "SAMD1", "SEC23A", "SEC24B", "SEC24C",
+"SERPINB2", "SMAD9", "SNX9", "TMEM33", "TNRC6A", "TRIP12", "UXT", "YAE1D1", "ZNF268", "STON2")))
+
+
+# --- Labban et al., 2018
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Labban_2018_SCC_RBPJ_targets',
+                          gene_symbol=c("KMO", "PTK2", "EXD3", "AKAP13", "RND3", "TRIM22", "SCD5", "HM13", "PIK3R3", "SPARC", "SLIT3", "CCL20",
+                                        "TNFSF10", "FGF1", "FRAS1", "TMSB4X", "PLEKHA8P1", "TRIM5", "RNF149", "SPTLC2", "PTPN14", "DYRK2", 
+                                        "PLEKHG1", "NOCT","GNAI2", "SPSB1", "MPRIP", "TPM1", "MFAP2", "ENC1", "SHANK2", "NCOA2", "KDM6B",
+                                        "SCARB2", "CNTNAP2", "SNN", "ANO6", "KCNK1", "NAPG", "SEC61A1", "SNX25", "FAT2", "SUSD1", "NOTCH2",
+                                        "ROBO2", "PLXDC2", "NRXN3", "GAS7", "HSF2BP", "HES1", "ZNF469", "OCLN", "TACSTD2", "CLCN4",
+                                        "TMCC1", "DCBLD1", "RALGPS1", "DSP", "NECTIN4", "RAB11FIP4", "MAGT1", "RHOV", "CEACAM19", "VPS18",
+                                        "CASZ1", "HIVEP2", "SP110")))
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Labban_2018_SCC_common_RBPJ_targets',
+                          gene_symbol=c("SCD5", "SPARC", "SLIT3", "SPTLC2", "GNAI2", "TPM1", "MFAP2", "SHANK2", "KDM6B", "SUSD1", "HES1", 
+                                        "DCBLD1", "CEACAM19"))
+)
+
+# --- Leontovich et al., 2018
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA',
+                          gene_symbol=c("NOTCH3", "HES1", "FOSB", "JUN", "EGR1", "EGR3", 
+                                        "MYC", "TFDP2", "ATF3", "PGR")))
+
+# --- Wang et al., 2011
+
+Wang2011_Notch1_target_genes <- read_excel("../data/Wang2011_Notch1_target_genes.xls", 
+    skip = 1) %>% na.omit()
+
+# update old gene names
+
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "ZNF642"] <-"ZFP69"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "ZNF643"] <- "ZFP69B"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "ANKRD43"] <- "SOWAHA"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C10orf2"] <- "TWNK"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C11orf61"] <- "MSANTD2"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C11orf82"] <- "DDIAS"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C12orf32"] <- "RHNO1"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C17orf63"] <- "FAM222B"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C17orf86"] <- "SNHG20"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C1orf107"] <- "DIEXF"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C1orf69"] <- "IBA57"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C22orf27"] <- "MORC2AS1"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C5orf54"] <- "ZBED8"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "C6orf114"] <- "GFOD1"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "FAM40B"] <- "STRIP2"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "HDHD1A"] <- "PUDP"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "KIAA1797"] <- "FOCAD"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "KIAA1826"] <- "MSANTD4"
+Wang2011_Notch1_target_genes$Gene[Wang2011_Notch1_target_genes$Gene == "NKX2-5"] <- "NKX25"
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Wang_2011_TLL_Notch1_targets',
+                          gene_symbol=c(Wang2011_Notch1_target_genes$Gene)))
+
+# --- Stoeck et al., 2014
+
+Stoeck2014_1 <- c("CD300A", "CHI3L2", "CR1", "CR2", "DTX1", "ESF1",
+                                        "FAM120A", "FAM27A", "FAM27B", "FAM27C",
+                                        "HES1", "HES4", "HEY1", "LNC00461", "MYC",
+                                        "NINJ1", "NOTCH3", "NRARP", "PRR5", "SEMA7A",
+                                        "TFRC")
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Stoeck2014_TNBC_ACC_GSI_response_1',
+                          gene_symbol=Stoeck2014_1))
+
+
+Stoeck2014_2 <- c("EXD3", "HES4", "HEY1", "MYC", "NOTCH3", "NRARP",
+                                        "PDE10A", "PTDSS1", "SHQ1", "TFRC")
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Stoeck2014_TNBC_ACC_GSI_response_2',
+                          gene_symbol=Stoeck2014_2))
+
+Stoeck2014_3 <- c("HES4", "HEY1","MYC", "NOTCH3", "NRARP", "TFRC")
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Stoeck2014_TNBC_ACC_GSI_response_3',
+                          gene_symbol=Stoeck2014_3))
+
+# --- Braune et al., 2016
+
+Braune_2016_1_s2_0_S2213671116000850_mmc4 <- read_excel("../data/Braune_2016_1-s2.0-S2213671116000850-mmc4.xls", 
+    skip = 2)
+
+Braune2016_1 <- Braune_2016_1_s2_0_S2213671116000850_mmc4$Gene...3 %>% na.omit %>% as.character
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Braune_2016_TNBC_Notch_signature',
+                          gene_symbol=Braune2016_1))
+
+Braune2016_2 <- Braune_2016_1_s2_0_S2213671116000850_mmc4$Gene...5 %>% na.omit %>% as.character
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Braune_2016_TNBC_Notch_sig_CSL_KO',
+                          gene_symbol=Braune2016_2))
+
+# --- Castel et al., 2013
+
+Castel2013_Dll1_vs_DAPT_Table_S4 <- read_excel("../data/Castel2013_Dll1_vs_DAPT_Table_S4.xlsx", 
+    skip = 2)
+
+ids <- data.frame(Symbol = Castel2013_Dll1_vs_DAPT_Table_S4$`6h UP` %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Castel_2013_6hup <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+# Castel_2013_6hup <- c(Castel2013_Dll1_vs_DAPT_Table_S4$`6h UP` %>% na.omit() %>% convertMouseGeneList() )
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Castel_2013_C2C12_Dll1_vs_DAPT_targets_6h_up',
+                          gene_symbol=Castel_2013_6hup) )
+
+ids <- data.frame(Symbol = Castel2013_Dll1_vs_DAPT_Table_S4$`6h DOWN` %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Castel_2013_6hdown <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+
+# Castel_2013_6hdown <- c(Castel2013_Dll1_vs_DAPT_Table_S4$`6h DOWN` %>% na.omit() %>% convertMouseGeneList() )
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Castel_2013_C2C12_Dll1_vs_DAPT_targets_6h_down',
+                          gene_symbol=Castel_2013_6hdown))
+
+ids <- data.frame(Symbol = Castel2013_Dll1_vs_DAPT_Table_S4$`24h UP` %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Castel_2013_24hup <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+#Castel_2013_24hup <- c(Castel2013_Dll1_vs_DAPT_Table_S4$`24h UP` %>% na.omit() %>% convertMouseGeneList() )
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up',
+                          gene_symbol=Castel_2013_24hup))
+
+ids <- data.frame(Symbol = Castel2013_Dll1_vs_DAPT_Table_S4$`24h DOWN` %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Castel_2013_24hdown <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+#Castel_2013_24hdown <- c(Castel2013_Dll1_vs_DAPT_Table_S4$`24h DOWN` %>% na.omit() %>% convertMouseGeneList() )
+
+Castel_2013_24hdown[Castel_2013_24hdown == "STYXL2"] <- "DUSP27"
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_down',
+                          gene_symbol=Castel_2013_24hdown))
+
+# --- Pinnell et al., 2015
+
+Pinell2015_NOTCH1_ZMIZ1_NIHMS729606_supplement_4 <- read_excel("../data/Pinell2015_NOTCH1_ZMIZ1_NIHMS729606-supplement-4.xlsx", 
+    skip = 1)
+
+ids <- data.frame(Symbol = Pinell2015_NOTCH1_ZMIZ1_NIHMS729606_supplement_4$`Gene Symbol` %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+pinell2015_genes <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+
+#pinell2015_genes <- c(Pinell2015_NOTCH1_ZMIZ1_NIHMS729606_supplement_4$`Gene Symbol` %>% convertMouseGeneList() )
+
+pinell2015_genes[pinell2015_genes == "MACIR"] <- "C5orf30"
+pinell2015_genes[pinell2015_genes == "CARS1"] <- "CARS"
+pinell2015_genes[pinell2015_genes == "AARS1"] <- "AARS"
+pinell2015_genes[pinell2015_genes == "NSG2"] <- "HMP19"
+pinell2015_genes[pinell2015_genes == "NARS1"] <- "NARS"
+pinell2015_genes[pinell2015_genes == "IARS1"] <- "IARS"
+pinell2015_genes[pinell2015_genes == "VARS1"] <- "VARS"
+
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Pinnell_2015_Tcells_Notch1_Zmiz1',                          gene_symbol=pinell2015_genes))
+
+# --- Klinakis et al., 2011
+
+ids <- data.frame(Symbol = c("Hes1", "Hes5", "Dtx1", "Ptcra", "Nrarp", "Cd28", "Cd3d", "Cd3e", "Rag2", "Rag1", "Cd69", "Gzma")) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Klinakis_2011_genes <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Klinakis_2011_TALL_NcstnKO',
+                          gene_symbol=Klinakis_2011_genes))
+
+
+# --- Diéguez-Hurtado et al., 2019
+
+Dieguez_Hurtado2019_RBPJ_targets_in_pericytes_41467_2019_10643_MOESM7_ESM <- read_excel("../data/Dieguez-Hurtado2019_RBPJ_targets_in_pericytes_41467_2019_10643_MOESM7_ESM.xlsx", 
+    skip = 1)
+
+ids <- data.frame(Symbol = Dieguez_Hurtado2019_RBPJ_targets_in_pericytes_41467_2019_10643_MOESM7_ESM$Symbol %>% na.omit() %>% as.character()) %>% 
+  dplyr::left_join(HOM_MouseHumanSequence,
+                   by = c("Symbol")) %>% 
+  pull("DB Class Key")
+
+Dieguez_Hurtado2019_genes <- HOM_MouseHumanSequence %>% 
+  dplyr::filter(`DB Class Key` %in% ids,
+                `Common Organism Name` == "human") %>% 
+  dplyr::pull("Symbol")
+
+
+gs.man = bind_rows(gs.man, base::data.frame(term='Dieguez_Hurtado_2019_Pericytes_RBPJ_targets',
+                          gene_symbol=Dieguez_Hurtado2019_genes))
+
+# export for easy import on XOP:
+
+# saveRDS(gs.man,
+#         file = "../RData/gs.man.rds")
+```
+
+## Msigdb signatures:  
+
+```{r 04-load-msigdb-genesets}
+
+# --- Part 1: Preparation of genesets from literature
+
+#gs.notch.literature <- readRDS("../RData/gs.man.rds")
+gs.notch.literature <- gs.man
+
+### update gene symbol labels:
+
+gs.notch.literature$new_gene_symbols <- xopdata::genes2approved(gs.notch.literature$gene_symbol, na_duplicates = F)
+
+gs.notch.literature <- gs.notch.literature %>% 
+  dplyr::select(-gene_symbol) %>% 
+  dplyr::select(term, gene_symbol = new_gene_symbols)
+
+# --- Part 2: Preparation of genesets from MSIGDB
+
+MSIGDB_Notch <- msigdbr::msigdbr(species = "Homo sapiens") %>%
+  dplyr::filter(grepl("notch", gs_name, ignore.case = TRUE))
+
+MSIGDB_Notch_use <- MSIGDB_Notch %>% 
+  dplyr::select(term = gs_name, gene_symbol = human_gene_symbol)
+
+
+
+DT::datatable(MSIGDB_Notch %>% 
+                dplyr::select(-gene_symbol, -entrez_gene, -ensembl_gene, -human_gene_symbol, -human_entrez_gene, -human_ensembl_gene) %>% 
+                dplyr::distinct()  %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+# 
+# MSIGDB_Notch %>% 
+#   dplyr::select(-gene_symbol, -entrez_gene, -ensembl_gene, -human_gene_symbol, -human_entrez_gene, -human_ensembl_gene) %>% 
+#   dplyr::distinct() %>% 
+#   kable() %>% 
+#   kableExtra::kable_classic(full_width = T)
+
+```
+
+# Signatures to use
+
+We will analyze all signatures that have:
+
+* A signature size with at least 3 genes
+* A signature size with maximum 100 genes
+
+```{r}
+
+# --- Combine and filter gene sets by length (3-100 in length)
+gs.size_select = gs.notch.literature %>%
+  na.omit() %>%
+  dplyr::bind_rows(MSIGDB_Notch_use)                               %>%
+  dplyr::group_by(term)                                            %>%
+  dplyr::summarize(symbols=base::list(base::unique(gene_symbol)),
+                   combined_length=n())                            %>%
+  dplyr::filter(combined_length >=  3 &
+                  combined_length <= 100)                          %>%
+  dplyr::distinct(symbols, .keep_all = TRUE)                       %>%
+  dplyr::ungroup()
+
+gs.notch.published = gs.notch.literature %>%
+  dplyr::bind_rows(MSIGDB_Notch_use) %>% 
+  dplyr::filter(term %in% !!gs.size_select$term) %>% 
+  dplyr::select(gs_name = term, gene_symbol)
+
+gs.notch.published_view <- gs.notch.published %>% 
+  dplyr::arrange(gs_name, gene_symbol) %>% 
+  tidyr::pivot_wider(names_from = "gs_name",
+                     values_from = "gene_symbol",
+                     values_fn = ~ paste(.x, collapse = ", ")) %>% 
+  t()
+
+xlsx::write.xlsx(gs.notch.published_view,
+                 file = "../results/signatures.xlsx")
+
+```
+
+
+From the `r length(unique(gs.notch.literature$term))` signatures that were selected by literature search `r sum(unique(gs.notch.literature$term) %in% gs.notch.published$gs_name)` qualified and from the MSIGDB signature data base with the term *NOTCH* in the name of the signature `r sum(unique(MSIGDB_Notch_use$term) %in% gs.notch.published$gs_name)` of `r length(unique(MSIGDB_Notch_use$term))` remained.  
+
+# GSEA
+
+We will load all published and MSIGDB signatures associated with NOTCH and run gene set enrichment analysis on our experimental data.  
+Thereby, we will identify gene signatures that are enriched also in our experimental setting. Only signatures, that remain significant, will be used for subsequent analyses.  
+It will make no sense to run the GSEA on this data set also for our derived signatures, as they are based on this data base and therefore automatically be enriched. We will perform GSEA on the validation data sets (internal and external).  
+
+As an example, the gene set enrichment scores for all significantly enriched signatures for the Jagged1-DAPT comparison are shown:  
+
+```{r 05-gsea, dev='png'}
+
+base::load("../RData/Part1a.RData")
+base::load("../RData/Part1b.RData")
+base::load("../RData/Part1c.RData")
+
+rm(ddsSE,
+   ddsSE_8h,
+   ddsSE_72h, 
+   meta.all_summary, 
+   notch_CCLE_mutations_csv_21Q1_long, 
+   qnt.mat_tpm_agg_log2)
+
+### --- Gene set enrichment using fgsea:
+
+library(clusterProfiler)
+
+Training_all_Jagged1_DAPT <- res_Jagged1_DAPT %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_Jagged1_DAPT_list <- Training_all_Jagged1_DAPT$stat
+names(Training_all_Jagged1_DAPT_list) <- Training_all_Jagged1_DAPT$symbol
+
+Training_all_Jagged1_DAPT_8h <- res_Jagged1_DAPT_8h %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_Jagged1_DAPT_8h_list <- Training_all_Jagged1_DAPT_8h$stat
+names(Training_all_Jagged1_DAPT_8h_list) <- Training_all_Jagged1_DAPT_8h$symbol
+
+Training_all_Jagged1_DAPT_72h <- res_Jagged1_DAPT_72h %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_Jagged1_DAPT_72h_list <- Training_all_Jagged1_DAPT_72h$stat
+names(Training_all_Jagged1_DAPT_72h_list) <- Training_all_Jagged1_DAPT_72h$symbol
+
+Training_all_Jagged1 <- res_Jagged1 %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_Jagged1_list <- Training_all_Jagged1$stat
+names(Training_all_Jagged1_list) <- Training_all_Jagged1$symbol
+
+Training_all_DAPT <- res_DAPT %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_DAPT_list <- Training_all_DAPT$stat
+names(Training_all_DAPT_list) <- Training_all_DAPT$symbol
+
+Training_all_Jagged1_8h <- res_Jagged1_8h %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_Jagged1_8h_list <- Training_all_Jagged1_8h$stat
+names(Training_all_Jagged1_8h_list) <- Training_all_Jagged1_8h$symbol
+
+Training_all_DAPT_72h <- res_DAPT_72h %>%
+  as.data.frame() %>%
+  arrange(desc(stat)) %>% 
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -pvalue, -padj, -ensembl, -gene_chrom, -genename) %>%
+  dplyr::arrange(desc(stat))
+
+Training_all_DAPT_72h_list <- Training_all_DAPT_72h$stat
+names(Training_all_DAPT_72h_list) <- Training_all_DAPT_72h$symbol
+
+rm(ddsSE_preparation, res_Jagged1_DAPT, res_Jagged1_DAPT_8h, res_Jagged1_DAPT_72h, res_Jagged1, res_DAPT, res_Jagged1_8h, res_DAPT_72h)
+
+### --- Do GSEA
+
+Training_gsea_Jagged1_DAPT <- GSEA(sort(Training_all_Jagged1_DAPT_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_Jagged1_DAPT_8h <- GSEA(sort(Training_all_Jagged1_DAPT_8h_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_Jagged1_DAPT_72h <- GSEA(sort(Training_all_Jagged1_DAPT_72h_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_Jagged1 <- GSEA(sort(Training_all_Jagged1_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_DAPT <- GSEA(sort(Training_all_DAPT_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_Jagged1_8h <- GSEA(sort(Training_all_Jagged1_8h_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+Training_gsea_DAPT_72h <- GSEA(sort(Training_all_DAPT_72h_list, decreasing = TRUE), TERM2GENE = gs.notch.published, pvalueCutoff = 1, minGSSize = 3, maxGSSize = 100)
+
+### --- Keep all gene sets, but filter later for those that are enriched (experimental ones are controls, should always be enriched)
+
+significant_signatures <- c(Training_gsea_Jagged1_DAPT@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>% 
+                          dplyr::pull(ID),
+                        Training_gsea_Jagged1_DAPT_8h@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID),
+                        Training_gsea_Jagged1_DAPT_72h@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID),
+                        Training_gsea_Jagged1@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID),
+                        Training_gsea_DAPT@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID),
+                        Training_gsea_Jagged1_8h@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID),
+                        Training_gsea_DAPT_72h@result %>% 
+                          dplyr::filter(p.adjust <= 0.05) %>%
+                          dplyr::pull(ID))
+
+significant_signatures <- unique(significant_signatures)
+
+# gs.man_filtered_keep <- gs.notch.published %>% 
+#   dplyr::filter(gs_name %in% !!signatures_to_keep)
+# 
+# gs.man_filtered_keep <- gs.notch.published
+
+Training_gsea_summary <- Training_gsea_Jagged1_DAPT@result %>% 
+  dplyr::select(ID, NES, p.adjust) %>% 
+  dplyr::mutate(gsea = "Jagged1_DAPT") %>% 
+  bind_rows(Training_gsea_Jagged1_DAPT_8h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_8h")) %>% 
+  bind_rows(Training_gsea_Jagged1_DAPT_72h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_72h")) %>% 
+  bind_rows(Training_gsea_Jagged1@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1")) %>% 
+  bind_rows(Training_gsea_DAPT@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "DAPT")) %>% 
+  bind_rows(Training_gsea_Jagged1_8h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_8h")) %>% 
+  bind_rows(Training_gsea_DAPT_72h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "DAPT_72h")) %>% 
+  as_tibble()
+
+DT::datatable(Training_gsea_summary %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+# No sense to include own signatures -> Trained on this cohort, validation data set needed
+
+merck_colors_gsea <- colorRamp2(c(-log10(Training_gsea_Jagged1_DAPT@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(Training_gsea_Jagged1_DAPT@result$p.adjust)[nrow(Training_gsea_Jagged1_DAPT@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+                                 
+gseaplot2(Training_gsea_Jagged1_DAPT, 
+          geneSetID = Training_gsea_Jagged1_DAPT@result$ID[c(1:3, (nrow(Training_gsea_Jagged1_DAPT@result)-1):nrow(Training_gsea_Jagged1_DAPT@result))], 
+          pvalue_table = FALSE, 
+          color = merck_colors_gsea(-log10(Training_gsea_Jagged1_DAPT@result$p.adjust)[c(1:3, (nrow(Training_gsea_Jagged1_DAPT@result)-1):nrow(Training_gsea_Jagged1_DAPT@result))])[order(Training_gsea_Jagged1_DAPT@result$ID[c(1:3, (nrow(Training_gsea_Jagged1_DAPT@result)-1):nrow(Training_gsea_Jagged1_DAPT@result))])],
+          ES_geom = "line") 
+
+# 
+# gseaplot2(gsea_Jagged1_DAPT, geneSetID = 1:3, pvalue_table = FALSE,
+#       color = as.character(merck_colors[c(3,2,1)]), ES_geom = "line")
+
+```
+
+# Evaluation of Coherence Scores
+
+```{r 06-cs}
+
+# --- annotate gene set length
+
+gs.notch.published_overview = gs.notch.published %>%
+  dplyr::group_by(gs_name)                                %>%
+  dplyr::summarize(symbols=base::list(base::unique(gene_symbol)),
+                   combined_length=n())                            %>%
+  #dplyr::distinct(symbols, .keep_all = TRUE)                      %>%
+  dplyr::ungroup()
+
+# --- Convert gene sets into a format usable by camera
+gs.list.published_notch = gs.notch.published_overview$symbols
+base::names(gs.list.published_notch) = gs.notch.published_overview$gs_name
+
+# base::length(gs.list.published_notch)
+# [1] 55
+
+### --- Functions --- ###
+
+get_emp_pvalue <- function(distribution, coherence_score, gs_size){
+  cs_length <- distribution %>%
+    dplyr::filter(size == !!gs_size)
+  
+  cs_greater <- cs_length %>% 
+    dplyr::filter(cs > coherence_score)
+  
+  emp_pval <- nrow(cs_greater)/nrow(cs_length)
+  
+  return(emp_pval)
+}
+
+coherence_score <- function(gene_set, test_dataset, distribution = NULL) {
+  dt = test_dataset[, intersect(colnames(test_dataset), gene_set[[1]])]
+  cors = cor(dt)
+  df <- data.frame(gs_name = names(gene_set),
+                   cs = mean(cors[lower.tri(cors)], na.rm = TRUE),
+                   n_geneset = length(gene_set[[1]]))
+  
+  if(!is.null(distribution)){
+    df <- df %>% 
+      dplyr::mutate(p_emp = get_emp_pvalue(distribution = !!distribution,
+                                           coherence_score = cs,
+                                           gs_size = n_geneset))
+  }
+  return(df)
+}
+
+#############################
+
+### --- Coherence Score TCGA-BRCA - Training --- ###
+
+cs_tcga_gs.published_notch <- data.frame(gs_name = character(),
+                                         cs = numeric(),
+                                         n_geneset = numeric(),
+                                         p_emp = numeric())
+
+for(i in names(gs.list.published_notch)){
+  cs_tcga_gs.published_notch <- bind_rows(cs_tcga_gs.published_notch,
+                                          coherence_score(gene_set = gs.list.published_notch[i],
+                                                          test_dataset = cpm_mat_full,
+                                                          distribution = cs_df_TCGA))
+}
+
+
+cs_tcga_gs.published_notch <- cs_tcga_gs.published_notch %>% 
+  dplyr::select(id_geneset_name = gs_name,
+                n_geneset,
+                cs_tcga = cs,
+                p_emp_tcga = p_emp)
+
+### --- Coherence Score Metabric - Batch 2 --- ###
+
+cs_metabric_gs.published_notch <- data.frame(gs_name = character(),
+                                             cs = numeric(),
+                                             n_geneset = numeric(),
+                                             p_emp = numeric())
+
+for(i in names(gs.list.published_notch)){
+  cs_metabric_gs.published_notch <- bind_rows(cs_metabric_gs.published_notch,
+                                              coherence_score(gene_set = gs.list.published_notch[i],
+                                                              test_dataset = metabric_gene_expession_data_scaled_wide_full,
+                                                              distribution = cs_df_metabric))
+}
+
+cs_metabric_gs.published_notch <- cs_metabric_gs.published_notch %>% 
+  dplyr::rename(id_geneset_name = gs_name,
+                cs_metabric = cs,
+                p_emp_metabric = p_emp)
+
+### --- Coherence Score Oslo2 - Batch 2 --- ###
+
+cs_oslo2_gs.published_notch <- data.frame(gs_name = character(),
+                                          cs = numeric(),
+                                          p_emp = numeric())
+
+for(i in names(gs.list.published_notch)){
+  cs_oslo2_gs.published_notch <- bind_rows(cs_oslo2_gs.published_notch,
+                                           coherence_score(gene_set = gs.list.published_notch[i],
+                                                           test_dataset = Oslo2_gene_expession_data_wide_full,
+                                                           distribution = cs_df_Oslo2))
+}
+
+cs_oslo2_gs.published_notch <- cs_oslo2_gs.published_notch %>% 
+  dplyr::rename(id_geneset_name = gs_name,
+                cs_oslo2 = cs,
+                p_emp_oslo2 = p_emp)
+
+```
+
+## Comparison table
+
+```{r 07-cs-comparison}
+
+cs.gs.published_notch <- cs_tcga_gs.published_notch %>% 
+  dplyr::left_join(cs_metabric_gs.published_notch) %>% 
+  dplyr::left_join(cs_oslo2_gs.published_notch)
+# 
+# 
+# knitr::kable(cs.gs.published_notch,
+#              format = "html", 
+#              escape = F) %>%
+#   kableExtra::kable_classic_2(full_width = F)
+
+
+DT::datatable(cs.gs.published_notch %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+```
+
+Summary of the coherence score measures:  
+
+```{r, results='asis'}
+
+
+cs.gs.published_notch_long <- cs.gs.published_notch %>% 
+  tidyr::pivot_longer(-c(1:2),
+                      names_to = "measure",
+                      values_to = "values") 
+
+# coherence scores:
+cat("**Coherence Scores > 0.1**")
+
+cs.gs.published_notch_long %>% 
+  dplyr::filter(grepl("^cs_", measure)) %>% 
+  dplyr::group_by(measure) %>% 
+  dplyr::summarise(cs_greater_01 = sum(values > 0.1)) %>% 
+  kable() %>% 
+  kableExtra::kable_classic()
+
+# coherence scores:
+cat("**Coherence Scores > 0.1 & emp. P Value < 0.001**")
+
+tcga_cs_p <- cs.gs.published_notch %>% 
+   dplyr::select(id_geneset_name, p_emp_tcga, cs_tcga) %>% 
+   dplyr::filter(p_emp_tcga < 0.001,
+                 cs_tcga > 0.1) %>% 
+   nrow()
+
+metabric_cs_p <- cs.gs.published_notch %>% 
+   dplyr::select(id_geneset_name, p_emp_metabric, cs_metabric) %>% 
+   dplyr::filter(p_emp_metabric < 0.001,
+                 cs_metabric > 0.1) %>% 
+   nrow()
+
+oslo2_cs_p <- cs.gs.published_notch %>% 
+   dplyr::select(id_geneset_name, p_emp_oslo2, cs_oslo2) %>% 
+   dplyr::filter(p_emp_oslo2 < 0.001,
+                 cs_oslo2 > 0.1) %>% 
+   nrow()
+
+tibble(measure = c("metabric", "oslo2", "tcga"),
+       cs_greater_01_emp_smaller_0001 = c(metabric_cs_p, oslo2_cs_p, tcga_cs_p))  %>% 
+  kable() %>% 
+  kableExtra::kable_classic()
+  
+
+```
+
+# Coherence Score Figure
+
+```{r, fig.width=6, fig.height=5}
+
+cs_comparison <- cs.gs.published_notch %>% 
+  dplyr::select(id_geneset_name, size = n_geneset, cs_TCGA = cs_tcga, cs_METABRIC = cs_metabric, cs_Oslo2 = cs_oslo2) %>% 
+  pivot_longer(-c(1:2),
+               names_to = "Data set",
+               values_to = "cs",
+               names_prefix = "cs_")
+
+# order_signatures <- names(sort(number_significant, decreasing = TRUE))[!grepl("^sign", names(sort(number_significant, decreasing = TRUE)))]
+
+cs_comparison <- cs_comparison %>% 
+  dplyr::mutate(label = str_replace_all(id_geneset_name, "\\_", " "))
+
+max_min = tibble(size = c(3:10, 20, 50, 100)) %>%
+  dplyr::mutate(y_max = 1,
+                y_min = -1/(size - 1))
+
+set.seed(1240)
+
+merck_colors_max <- colorRamp2(seq(from = 1, to = 80, by = 8), merck_colors[1:10])
+
+colors_signatures <- as.character(sample(merck_colors_max(1:80))[c(1:length(unique(cs_comparison$label)))])
+names(colors_signatures) <- unique(cs_comparison$label)
+
+label_signatures <- cs_comparison %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  dplyr::filter(cs == max(cs)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::slice_max(cs, n = 3)
+
+color_label_signatures <- colors_signatures[label_signatures$label]
+
+ggplot2::ggplot() +
+  ggplot2::geom_ribbon(data = max_min, aes(x=size, ymax=y_max, ymin=y_min),
+                       fill = "grey80", alpha=.4) +
+  ggplot2::geom_point(data = (cs_q %>% 
+                                dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                                dplyr::mutate(q_cut = droplevels(q_cut))), 
+                      aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+
+  ggplot2::geom_path(data = (cs_q %>% 
+                               dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                               dplyr::mutate(q_cut = droplevels(q_cut))), 
+                     aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, group=q_cut,
+                         linetype=trans)) +
+  ggplot2::geom_point(data = (cs_q %>% 
+                               dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                               dplyr::mutate(q_cut = droplevels(q_cut))), 
+                      aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+  ggplot2::theme_bw(base_size = 14) +
+  ggplot2::theme(legend.position = "right",
+                 plot.margin = unit(c(.1,.2,.1,.1), units = "in")) +
+  ggplot2::scale_color_manual(values = as.character(merck_colors[c(3,1,2)])) +
+  ggplot2::scale_y_continuous(breaks = c(-.5, -.25, 0, .25, .5, .75, 1),
+                              expand = c(0, 0)) +
+  ggplot2::scale_x_continuous(limits = c(3, 100), expand = c(0, 0),
+                     breaks=c(3, 4, 6, 10, 20, 50, 100),
+                     trans="log10") +
+  ggplot2::labs(x="Signature Size", 
+                y="Coherence Score",
+                title = paste0("Published NOTCH signatures (n = ",length(unique(cs_comparison$id_geneset_name)),")"),
+                subtitle = "Evaluation on patient data sets") +
+  ggplot2::guides(color=guide_legend("Empirical p-value")) +
+  scale_linetype_manual(values=c("longdash", "solid"), guide="none") +
+  scale_size_manual(values=c(.5, .5, .5), guide="none") +
+  ggnewscale::new_scale_color() +
+  ggplot2::geom_point(data = cs_comparison, aes(x=size, y=cs, shape = `Data set`, color = label)) +
+  ggplot2::scale_color_manual(values = colors_signatures) +
+  guides(color = "none") +
+  ggnewscale::new_scale_color() +
+  geom_text_repel(aes(x=size, y=cs, label = label, color = label), 
+                  data = label_signatures,
+                  size = 2.7, 
+                  fontface = "bold",
+                  #nudge_x = -5,
+                  nudge_y = 0.15,
+                  force = 3) +
+  ggplot2::scale_color_manual(values = color_label_signatures) +
+    guides(color = "none")
+
+
+```
+
+```{r, fig.width=6, fig.height=5}
+
+ggplot2::ggplot() +
+  ggplot2::geom_ribbon(data = max_min, aes(x=size, ymax=y_max, ymin=y_min),
+                       fill = "grey80", alpha=.4) +
+  ggplot2::geom_point(data = (cs_q %>% 
+                                dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                                dplyr::mutate(q_cut = droplevels(q_cut))), 
+                      aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+
+  ggplot2::geom_path(data = (cs_q %>% 
+                               dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                               dplyr::mutate(q_cut = droplevels(q_cut))), 
+                     aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, group=q_cut,
+                         linetype=trans)) +
+  ggplot2::geom_point(data = (cs_q %>% 
+                               dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+                               dplyr::mutate(q_cut = droplevels(q_cut))), 
+                      aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+  ggplot2::theme_bw(base_size = 14) +
+  ggplot2::theme(legend.position = "right",
+                 plot.margin = unit(c(.1,.2,.1,.1), units = "in")) +
+  ggplot2::scale_color_manual(values = as.character(merck_colors[c(3,1,2)])) +
+  ggplot2::scale_y_continuous(breaks = c(-.5, -.25, 0, .25, .5, .75, 1),
+                              expand = c(0, 0)) +
+  ggplot2::scale_x_continuous(limits = c(3, 100), expand = c(0, 0),
+                     breaks=c(3, 4, 6, 10, 20, 50, 100),
+                     trans="log10") +
+  ggplot2::labs(x="Signature Size", 
+                y="Coherence Score",
+                title = paste0("Published NOTCH signatures (n = ",length(unique(cs_comparison$id_geneset_name)),")"),
+                subtitle = "Evaluation on patient data sets") +
+  ggplot2::guides(color=guide_legend("Empirical p-value")) +
+  scale_linetype_manual(values=c("longdash", "solid"), guide="none") +
+  scale_size_manual(values=c(.5, .5, .5), guide="none") +
+  ggnewscale::new_scale_color() +
+  ggplot2::geom_point(data = cs_comparison, aes(x=size, y=cs, shape = `Data set`, color = label)) +
+  ggplot2::scale_color_manual(values = colors_signatures) +
+  guides(color = "none") +
+  ggnewscale::new_scale_color() +
+  geom_text_repel(aes(x=size, y=cs, label = label, color = label), 
+                  data = label_signatures,
+                  size = 2, 
+                  fontface = "bold",
+                  #nudge_x = -5,
+                  nudge_y = 0.15,
+                  force = 3) +
+  ggplot2::scale_color_manual(values = color_label_signatures) +
+    guides(color = "none")
+
+
+```
+
+Other kind of visualization
+
+```{r coherence_heatmap_full,fig.width=15, fig.height=8}
+
+cs_all <- cs_comparison %>% 
+  bind_rows(cs_all_optimized %>% 
+              dplyr::filter(id_geneset_name == "signature_11") %>% 
+              dplyr::mutate(id_geneset_name = "Notch 20-Gene Signature") %>% 
+              dplyr::select(id_geneset_name, signature_size, cs_mean_TCGA, cs_mean_metabric, cs_mean_Oslo2) %>% 
+              tidyr::pivot_longer(-c(1:2),
+                                  names_to = "Data set",
+                                  values_to = "cs") %>% 
+              dplyr::mutate(`Data set` = str_remove(`Data set`, "cs_mean_"),
+                            `Data set` = ifelse(`Data set` == "metabric", "METABRIC", `Data set`),
+                            label = "Notch 20-Gene Signature") %>% 
+              dplyr::rename(size = "signature_size"))
+
+
+# calculate emp. p values per group
+
+cs_tcga <- cs_all %>%
+  dplyr::filter(`Data set` == "TCGA") %>% 
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value = get_emp_pvalue(distribution = !!cs_df_TCGA, coherence_score = cs, gs_size = size)) %>% 
+  dplyr::ungroup()
+
+cs_metabric <- cs_all %>%
+  dplyr::filter(`Data set` == "METABRIC") %>% 
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value = get_emp_pvalue(distribution = !!cs_df_metabric, coherence_score = cs, gs_size = size)) %>% 
+  dplyr::ungroup()
+
+cs_Oslo2 <- cs_all %>%
+  dplyr::filter(`Data set` == "Oslo2") %>% 
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value = get_emp_pvalue(distribution = !!cs_df_Oslo2, coherence_score = cs, gs_size = size)) %>% 
+  dplyr::ungroup()
+
+cs_all <- cs_tcga %>% 
+  bind_rows(cs_metabric) %>% 
+  bind_rows(cs_Oslo2)
+
+cs_all$adj.emp.p.value <- p.adjust(cs_all$emp_p_value)
+
+cs_all_cs <- cs_all %>% 
+  dplyr::select(label, cs, `Data set`) %>% 
+  tidyr::pivot_wider(names_from = "label",
+                     values_from = "cs") %>% 
+  tibble::column_to_rownames("Data set")
+
+cs_all_p <- cs_all %>% 
+  dplyr::select(label, adj.emp.p.value, `Data set`) %>% 
+  tidyr::pivot_wider(names_from = "label",
+                     values_from = "adj.emp.p.value") %>% 
+  tibble::column_to_rownames("Data set")
+
+cs_all_p_class <- cs_all_p
+
+cs_all_p_class[cs_all_p < 0.05] <- "*"
+cs_all_p_class[cs_all_p < 0.01] <- "**"
+cs_all_p_class[cs_all_p < 0.001] <- "***"
+
+col_fun = colorRamp2(c(0, 0.1, 0.2), c(merck_colors[1], "white", merck_colors[2]))
+
+ComplexHeatmap::Heatmap(cs_all_cs, 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Coherence Scores of NOTCH signatures in clinical patient cohorts",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(cs_all_cs)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(cs_all_cs), 
+                          gp = gpar(fontsize = 12)
+                          ),
+                        height = unit(5, "mm")*nrow(cs_all_cs),
+                        heatmap_legend_param = list(
+                          title = "Coherence Score", at = c(0, 0.1, 0.2)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(cs_all_p[i, j] < 0.05){
+                            grid.text(cs_all_p_class[i, j], x, y, gp = gpar(fontsize = 7))
+                          }
+                          
+                        })
+
+
+
+```
+
+```{r coherence_heatmap_focus, fig.width=8, fig.height=7}
+# signatures to show:
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+labels_keep <- cs_all %>% 
+  dplyr::select(id_geneset_name, label) %>% 
+  dplyr::distinct() %>% 
+  dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+  pull(label)
+
+ComplexHeatmap::Heatmap(cs_all_cs[colnames(cs_all_cs) %in% labels_keep], 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Coherence Scores of NOTCH signatures in clinical patient cohorts",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(cs_all_cs)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(cs_all_cs), 
+                          gp = gpar(fontsize = 12)
+                          ),
+                        height = unit(5, "mm")*nrow(cs_all_cs),
+                        heatmap_legend_param = list(
+                          title = "Coherence Score", at = c(0, 0.1, 0.2)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(cs_all_p[colnames(cs_all_p) %in% labels_keep][i, j] < 0.05){
+                            grid.text(cs_all_p_class[colnames(cs_all_p_class) %in% labels_keep][i, j], x, y, gp = gpar(fontsize = 7))
+                          }
+                        })
+
+```
+
+
+
+
+
+
+```{r 08-save}
+
+cs.gs.opt_notch = cs_all_optimized
+gs.list.opt_notch = gene_set_list_opt_notch
+
+save(cs.gs.opt_notch,
+     gs.list.opt_notch,
+     cs.gs.published_notch,
+     gs.list.published_notch,
+     Training_gsea_summary,
+     file = "../RData/Part3.RData")
+
+```
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

@@ -1,0 +1,1802 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 2 - Signature Development"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    code_download: TRUE
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part2.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  # 4 inch high, 6 inch wide
+	fig.width = 6,
+	dpi = 300,                      
+	dev = c("svg"),                 
+	fig.align = "center",
+	# fig.path = "../Figures/Part2/",           
+	message = FALSE,
+	warning = TRUE,
+	echo = TRUE,                     
+	cache.path = "../cache/Part2/",
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, results = 'hide', message = FALSE, warning=FALSE}
+
+library(tidyverse)
+
+library(xlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ComplexHeatmap)
+library(ggpubr)
+library(ggrepel)
+library(circlize)
+library(ggthemes)
+
+library(VennDiagram)
+
+library(DESeq2)
+library(edgeR)
+library(pbapply)
+
+library(ggcorrplot)
+library(cowplot)
+
+
+library(rmarkdown)
+# library(DT)
+
+library(ProfilerAPI2)
+# library(xopdata)
+# xopdata_src <- xopdata::get_src()
+
+# Citations:
+
+knitr::write_bib(file = '../src/part2.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Introduction**
+
+We want to identify robust NOTCH signatures for the activation and inactivation of the NOTCH pathway. Therefore, the group of Urban Lendahl at the Karolinska Institutet, Stockholm, Schweden and the group of Dirk Wienke at the Translational Innovation Platform Oncology and Immuno-Oncology at Merck KGaA, Darmstadt, Germany teamed up.  
+
+**Research Questions**
+
+<div class = "box">
+
+We treated six basal-like breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+Each condition was treated for both 8h and for 72h:  
+
+* normal (no treatment): "FC"
+* NOTCH ON (cultured on immobilised Jagged1 ligand): "Jagged1"
+* NOTCH OFF (blocked with GSI): "DAPT"
+
+Of special interest is the comparison: Jagged1 (NOTCH high) vs. DAPT (NOTCH low)  
+
+**Specific goals:**  
+
+Identify a Notch signature:  
+
+* that defines active and hyperactive notch
+* that may identify responsive cell lines / patients
+
+</div>
+  
+**Methods**
+
+We will test various approaches to identify signatures that may:  
+
+* Indicate NOTCH activation status
+  + Use full DESeq2 differential expression results and use a defined fold-change and p-value cutoff
+  + Use the 8h and 72h differential expression results seperately and only use the overlap of differentially expressed genes. This approach is more robust, as the resulting genes need to be up/down-regulated in each time point. In the full model due to mean parametrization, selected genes could be high/low in one of the time points only.  
+
+This is the manual signature identification approach, by selecting manual fold change cutoffs:
+
+* The resulting signature should be between 10 and 30 genes and fold change cutoffs are applied accordingly.  
+
+**Conclusion**  
+
+<div class = "box">
+
+Identification of 15 distinct signatures. Of these, signature 3, X, X and X show signatures with an coherence score > 0.1 and a significant empirical p value < 0.001 over all three patient cohorts.  
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].
+Data was sourced from the X-Omics Platform using the `ProfilerAPI2` [@R-ProfilerAPI2] and `xopdata` [@R-xopdata]. Communication with excel files was performed using the `xlsx` package [@R-xlsx]. 
+
+**Expression Profiling**  
+The RNASeq data set and data from public ressources was analyzed using `DESeq2` [@R-DESeq2] and `edgeR` [@R-edgeR]. The apply function was parallelized using `pbapply` [@R-pbapply].
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], `ggrepel` [@R-ggrepel] and `cowplot` [@R-cowplot].  Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. VennDiagrams were drawn using the `VennDiagram` package [@R-VennDiagram]. Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].     
+
+**Signature Selection**  
+The visualisation of the correlation matrix was performed by `ggcorrplot` [@R-ggcorrplot].  
+  
+# Experimental Data Import
+
+We import the data of the analysis of both timepoints (8h and 72h) together, as well as the analyses for each timepoint seperately.  
+
+```{r 02-load-data}
+
+base::load("../RData/Part1a.RData")
+base::load("../RData/Part1b.RData")
+base::load("../RData/Part1c.RData")
+
+```
+
+## Public Data Sources
+
+```{r 03a-Data-Sources, cache=TRUE, cache.lazy=FALSE}
+
+#  Interactive Tables are integrated using the `DT` package [@R-DT].  
+
+format_category <- function(x) {
+  x <- stringr::str_replace_all(x, "\\|", "<br /><strong>")
+  x <- paste0("<strong>",x)
+  x <- stringr::str_replace_all(x, "\\:", "\\:</strong> ")
+  x <- stringr::str_replace_all(x, "_", " ")
+  x
+}
+
+# Internal Access to Data Lake
+# Data sets as described in the manuscript
+
+api = ProfilerAPI2::profiler_api(profile = "myprofile")   ## needed for Rmarkdown connection to ProfilerAPI2
+con <- api$conn
+
+# TCGA
+
+id_xena_tcga <- "xena_tcga_rna_wts_gexp_20q1_prod_schelhorn_3"
+
+merck_tcga_rna_wtstmm_gexp_source <- api$conn %>%
+  tbl(id_xena_tcga) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  pull(meta_source) %>% 
+  unique
+
+merck_tcga_rna_wtstmm_gexp_transformation <- api$conn %>%
+  tbl(id_xena_tcga) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  pull(meta_measurement) %>% 
+  unique
+
+Data_Sources <- data.frame(Type = "TCGA Expression Data",
+                           Source = paste0(format_category(merck_tcga_rna_wtstmm_gexp_source),"<br /> "),
+                           Transformation = paste0(format_category(merck_tcga_rna_wtstmm_gexp_transformation),"<br /><hr> ")
+                           )
+
+
+# METABRIC
+
+id_metabric <- "cbioportal_metabric_rna_microarray_gexp_22q1_prod_geist_0"
+
+metabric_source <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  dplyr::filter(id_patient_id == "MB-5452") %>% 
+  dplyr::select(meta_source, meta_measurement) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "METABRIC",
+               Source = paste0(format_category(metabric_source$meta_source),"<br /> "),
+               Transformation = paste0(format_category(metabric_source$meta_measurement),"<br /><hr> "))
+  )
+
+
+# Oslo2
+
+id_oslo2 <- "gse80999_oslo2_rna_microarray_gexp_22q1_prod_geist_2"
+
+oslo2_source <- api$conn %>%
+  tbl(id_oslo2) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  #dplyr::filter(id_patient_id == "GSM1403854") %>% 
+  dplyr::select(meta_source, meta_measurement) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2",
+               Source = paste0(format_category(oslo2_source$meta_source),"<br /> "),
+               Transformation = paste0(format_category(oslo2_source$meta_measurement),"<br /><hr> "))
+  )
+
+knitr::kable(Data_Sources,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+### --- Load full data sets:
+
+### --- TCGA
+
+gene_universe <- rowData(ddsSE)$symbol
+
+id_merck_tcga_rna_wtstmm_gexp <- "merck_tcga_rna_wtstmm_gexp_21q2_prod_kreis_2"
+
+gexp = api$conn %>%
+  tbl(id_merck_tcga_rna_wtstmm_gexp) %>% 
+  dplyr::filter(id_tcga_cohort == "BRCA",
+                sample_status == "primary tumor",
+                id_gene_symbol %in% !!gene_universe) %>%
+  dplyr::select(id_tcga_sample_barcode, id_gene_symbol, quant_tmm_tpm, quant_tmm_cpm) %>%
+  dplyr::collect()
+
+cpm_mat = gexp  %>%
+  dplyr::select(-quant_tmm_tpm) %>%
+  tidyr::pivot_wider(names_from = "id_gene_symbol",
+                     values_from = "quant_tmm_cpm") %>% 
+  # tidyr::spread(key="id_gene_symbol", value="quant_tmm_cpm")  %>% 
+  dplyr::select_if(~all(!is.na(.x)))  %>%
+  dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>%
+  tibble::column_to_rownames("id_tcga_sample_barcode")
+
+tpm_mat = gexp  %>%
+  dplyr::select(-quant_tmm_cpm) %>%
+  tidyr::pivot_wider(names_from = "id_gene_symbol",
+                     values_from = "quant_tmm_tpm") %>% 
+  #tidyr::spread(key="id_gene_symbol", value="quant_tmm_tpm")  %>% 
+  dplyr::select_if(~all(!is.na(.x)))  %>%
+  dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>%
+  tibble::column_to_rownames("id_tcga_sample_barcode")
+
+rm(gexp)
+
+### --- METABRIC:
+
+metabric_gene_expession_data <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::select(-meta_source, -meta_measurement, -id_gene_entrez_id) %>% 
+  # dplyr::filter(id_gene_symbol %in% !!gene_universe_selected_signatures) %>% 
+  collect()
+
+# remove NA id_symbols (most likely obsolete entrez ids)
+
+metabric_gene_expession_data <- metabric_gene_expession_data %>% 
+  dplyr::filter(!is.na(id_gene_symbol))
+
+# scale per gene symbol
+
+metabric_gene_expession_data_scaled <- metabric_gene_expession_data %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_logmfi = as.numeric(scale(quant_logmfi))) %>% 
+  dplyr::ungroup()
+
+rm(metabric_gene_expession_data)
+
+# remove duplicates and 
+
+metabric_gene_expession_data_scaled_wide <- metabric_gene_expession_data_scaled %>% 
+  dplyr::distinct(id_patient_id, id_gene_symbol, .keep_all = TRUE) %>% 
+  tidyr::pivot_wider(names_from = "id_gene_symbol",
+                     values_from = "quant_logmfi") %>% 
+  as.data.frame() %>% 
+  column_to_rownames("id_patient_id")
+
+rm(metabric_gene_expession_data_scaled)
+
+### --- Oslo2
+
+Oslo2_gene_expession_data <- api$conn %>%
+  tbl(id_oslo2) %>% 
+  dplyr::select(-meta_source, -meta_measurement, -id_gene_entrez_id) %>% 
+  # dplyr::filter(id_gene_symbol %in% !!gene_universe_selected_signatures) %>% 
+  collect()
+
+# scale per gene symbol (already done)
+# 
+# Oslo2_gene_expession_data_scaled <- Oslo2_gene_expession_data %>% 
+#   dplyr::group_by(id_gene_symbol, id_gene_entrez_id) %>% 
+#   dplyr::mutate(quant_logmfi = as.numeric(scale(quant_zlogmfi))) %>% 
+#   dplyr::ungroup()
+
+# filter duplicated patient data:
+
+Oslo2_gene_expession_data_wide <- Oslo2_gene_expession_data %>% 
+  dplyr::select(-id_patient_id) %>% 
+  distinct(id_geoid, id_gene_symbol, .keep_all = TRUE) 
+
+Oslo2_gene_expession_data_wide <- Oslo2_gene_expession_data_wide %>%
+  tidyr::pivot_wider(names_from = "id_gene_symbol",
+                     values_from = "quant_zlogmfi") %>% 
+  as.data.frame() %>% 
+  column_to_rownames("id_geoid")
+
+rm(Oslo2_gene_expession_data)
+
+### --- Subset data sets to the intersection of genes of the three data sets
+
+gene_universe_3_datasets <- intersect(intersect(colnames(cpm_mat), 
+                                                colnames(metabric_gene_expession_data_scaled_wide)),
+                                      colnames(Oslo2_gene_expession_data_wide))
+
+cpm_mat_full <- cpm_mat
+cpm_mat <- cpm_mat[,colnames(cpm_mat) %in% gene_universe_3_datasets]
+
+tpm_mat_full <- tpm_mat
+tpm_mat <- tpm_mat[,colnames(tpm_mat) %in% gene_universe_3_datasets]
+
+metabric_gene_expession_data_scaled_wide_full <- metabric_gene_expession_data_scaled_wide
+metabric_gene_expession_data_scaled_wide <- metabric_gene_expession_data_scaled_wide[,colnames(metabric_gene_expession_data_scaled_wide) %in% gene_universe_3_datasets]
+
+Oslo2_gene_expession_data_wide_full <- Oslo2_gene_expession_data_wide
+Oslo2_gene_expession_data_wide <- Oslo2_gene_expession_data_wide[,colnames(Oslo2_gene_expession_data_wide) %in% gene_universe_3_datasets]
+
+# base::save.image(file = "part2_start.RData")
+
+base::saveRDS(gene_universe_3_datasets,
+              file = "../data/TCGA_METABRIC_Oslo2_Gene_Universe.rds")
+
+```
+
+# Signatures: 
+
+We will start to evaluate signatures that were derived from the differential expression analysis of the Notch ON/OFF experiment on the TCGA breast cancer cohort using manually chosen Fold Change cutoffs. Subsequently, we will try to optimize the signatures using the breast cancer CCLE cell line cohort and evaluate the result on the TCGA BRCA data set.  
+
+## Comparisons
+
+### Comparison Jagged1 vs. DAPT, full data set
+
+Use full DESeq2 differential expression results for the comparisons:
+
+```{r}
+
+top_Jagged1_DAPT <- res_Jagged1_DAPT %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_Jagged1_DAPT <- top_Jagged1_DAPT %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+```
+
+### Comparison Jagged1 vs. DAPT, 8h + 72h seperately
+
+Use the 8h and 72h differential expression results seperately and only use the overlap of differentially expressed genes. This approach is more robust, as the resulting genes need to be up/down-regulated in each time point. In the full model due to mean parametrization, selected genes could be high/low in one of the time points only.  
+
+```{r}
+
+top_Jagged1_DAPT_8h <- res_Jagged1_DAPT_8h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+top_Jagged1_DAPT_72h <- res_Jagged1_DAPT_72h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_Jagged1_DAPT_8h <- top_Jagged1_DAPT_8h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+top_Jagged1_DAPT_72h <- top_Jagged1_DAPT_72h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+```
+
+### Comparison Jagged1 vs. FC and DAPT vs. FC, full data set
+
+This will be the most stringend selection of hits:  
+Use DESeq2 differential expression results with the FC-treatment as control. In addition, only use the overlap of genes upregulated in the Jagged1 vs. FC condition and downregulated in the DAPT vs. FC condition and vice versa. This approach is most robust of the used approaches, as the resulting genes need to be specifically regulated in opposite directions in comparison to the control. One could repeat this approach using the seperate time points, but here, most likely, we would need to loosen the fold-change cutoff to get any results.  
+
+```{r}
+
+top_Jagged1_FC <- res_Jagged1 %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+top_DAPT_FC <- res_DAPT %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_Jagged1_FC <- top_Jagged1_FC %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+top_DAPT_FC <- top_DAPT_FC %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+# save all differentially expressed genes in an excel file
+
+
+
+```
+
+### Time-point specific signatures - Comparison Jagged1 vs. DAPT, 8h and 72h seperately
+
+Identify signatures, that indicate Notch activation level specifically for the time points 8h and 72h.  
+Use DESeq2 differential expression results seperately for each time point.
+
+### Signatures that are specific for Notch activation and inactivation from the ground state
+
+As the p-value distributions from the differential expression analyses that compare Jagged1 or DAPT from the ground state for most of the comparisons do not show a left sided distribution, we would only be able to use those, where we see such a distribution:  
+
+* FC-DAPT, both timepoints (8h+72h)
+* FC-DAPT 72h only
+* FC-Jagged 8h only
+
+For the other conditions, we cannot exclude false positive hits.  
+
+```{r}
+
+top_Jagged1_FC_72h <- res_Jagged1_72h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_Jagged1_FC_72h <- top_Jagged1_FC_72h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+top_DAPT_FC_72h <- res_DAPT_72h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_DAPT_FC_72h <- top_DAPT_FC_72h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+
+top_Jagged1_FC_8h <- res_Jagged1_8h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_Jagged1_FC_8h <- top_Jagged1_FC_8h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+
+top_DAPT_FC_8h <- res_DAPT_8h %>%
+  as.data.frame() %>%
+  dplyr::filter(!is.na(padj),
+                padj < 0.05) %>%
+  rownames_to_column("ensembl") %>%
+  dplyr::mutate(ensembl = str_remove(ensembl, "\\.[0-9]+$")) %>%
+  dplyr::left_join(rowData(ddsSE_preparation) %>%
+                     as_tibble(),
+                   by = c("ensembl")) %>%
+  dplyr::select(-baseMean, -lfcSE, -stat, -ensembl, -gene_chrom) %>%
+  dplyr::arrange(desc(log2FoldChange))
+
+# filter gene universe:
+top_DAPT_FC_8h <- top_DAPT_FC_8h %>% 
+  dplyr::filter(symbol %in% !!gene_universe_3_datasets)
+```
+
+## Differential Expression Comparisons:
+
+```{r fig.height=4, fig.width=8}
+# generate matrix:
+  
+comparison <- c("Notch On vs. Ground State", "Ground State vs. Notch Off", "Notch On vs. Notch Off")
+timepoints <- c("8h", "72h", "8h + 72h")
+regulation <- c("Upregulated", "Downregulated")
+
+comparisons_1 <- expand.grid(comparison, timepoints, regulation)
+
+comparison <- c("top_Jagged1_FC", "top_DAPT_FC", "top_Jagged1_DAPT")
+timepoints <- c("_8h", "_72h", "")
+regulation <- c("Upregulated", "Downregulated")
+
+comparisons_view <- expand.grid(comparison, timepoints, regulation) %>% 
+  dplyr::mutate(Var1 = paste0(Var1, Var2)) %>% 
+  dplyr::select(-Var2)
+
+n_signif <- c()
+
+for(i in 1:nrow(comparisons_view)){
+  n_signif <- c(n_signif,
+                get(comparisons_view$Var1[i]) %>% 
+                  dplyr::mutate(direction = ifelse(log2FoldChange > 0, "Upregulated", "Downregulated")) %>% 
+                  dplyr::filter(direction == !!comparisons_view$Var3[i]) %>% 
+                  nrow())
+}
+
+comparisons_1$signif <- n_signif
+
+# manual checking of p-value distribution
+
+p_val_dist <- comparisons_1 %>% 
+  dplyr::select(Var1, Var2) %>% 
+  dplyr::distinct() %>% 
+  dplyr::mutate(p_val_dist = c(TRUE,
+                               FALSE,
+                               TRUE,
+                               FALSE,
+                               TRUE,
+                               TRUE,
+                               FALSE,
+                               TRUE,
+                               TRUE))
+comparisons_1 <- comparisons_1 %>% 
+  dplyr::left_join(p_val_dist)
+
+# heatmap test:
+
+comparisons_up_n <- comparisons_1 %>% 
+  dplyr::filter(Var3 == "Upregulated") %>% 
+  dplyr::select(-Var3, -p_val_dist) %>% 
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "signif") %>% 
+  tibble::column_to_rownames("Var2") %>% 
+  as.matrix() %>% 
+  t()
+
+comparisons_up_p <- comparisons_1 %>% 
+  dplyr::filter(Var3 == "Upregulated") %>% 
+  dplyr::select(-Var3, -signif) %>% 
+  dplyr::mutate(p_val_dist = ifelse(p_val_dist, "", "X")) %>% 
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "p_val_dist") %>% 
+  tibble::column_to_rownames("Var2") %>% 
+  as.matrix() %>% 
+  t()
+
+col_fun_up = colorRamp2(c(0, max(comparisons_1$signif)), col_heatmap[c(2,3)])
+
+hm_up <- Heatmap(comparisons_up_n, 
+        name = "Genes\nUpregulated", 
+        width = ncol(comparisons_up_n)*unit(7, "mm"), 
+        height = nrow(comparisons_up_n)*unit(7, "mm"),
+        rect_gp = gpar(col = "grey", lwd = 0.5),
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        row_names_side = "left",
+        col = col_fun_up,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(comparisons_up_p[i, j]=="X"){
+            grid.text(comparisons_up_p[i, j], x, y, gp = gpar(fontsize = 16))
+          }
+          if(comparisons_up_n[i, j]>100){
+            grid.rect(x, y, width, height, gp = gpar(fill = col_fun_up(comparisons_up_n[i, j]),
+                                                       lwd = 2, col = "black"))
+          }
+})
+
+
+comparisons_down_n <- comparisons_1 %>% 
+  dplyr::filter(Var3 == "Downregulated") %>% 
+  dplyr::select(-Var3, -p_val_dist) %>% 
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "signif") %>% 
+  tibble::column_to_rownames("Var2") %>% 
+  as.matrix() %>% 
+  t()
+
+comparisons_down_p <- comparisons_1 %>% 
+  dplyr::filter(Var3 == "Downregulated") %>% 
+  dplyr::select(-Var3, -signif) %>% 
+  dplyr::mutate(p_val_dist = ifelse(p_val_dist, "", "X")) %>% 
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "p_val_dist") %>% 
+  tibble::column_to_rownames("Var2") %>% 
+  as.matrix() %>% 
+  t()
+
+col_fun_down = colorRamp2(c(0, max(comparisons_1$signif)), col_heatmap[c(2,1)])
+
+hm_down <- Heatmap(comparisons_down_n, 
+        name = "Genes\nDownregulated", 
+        width = ncol(comparisons_down_n)*unit(7, "mm"), 
+        height = nrow(comparisons_down_n)*unit(7, "mm"),  
+        rect_gp = gpar(col = "grey", lwd = 0.5),
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        row_names_side = "left",
+        col = col_fun_down,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(comparisons_down_p[i, j]=="X"){
+            grid.text(comparisons_down_p[i, j], x, y, gp = gpar(fontsize = 16))
+          }
+          if(comparisons_down_n[i, j]>100){
+              grid.rect(x, y, width, height, gp = gpar(fill = col_fun_down(comparisons_down_n[i, j]),
+                                                       lwd = 2, col = "black"))
+          }
+          
+})
+
+hm_up %v% hm_down
+
+normal_hits <- comparisons_1 %>% 
+  dplyr::filter(p_val_dist,
+                signif>100)
+
+normal_hits <- normal_hits %>% 
+  dplyr::mutate(View1 = str_replace(Var1, "Notch On vs. Notch Off", "top_Jagged1_DAPT"),
+                View1 = str_replace(View1, "Ground State vs. Notch Off", "top_DAPT_FC"),
+                View1 = str_replace(View1, "Notch On vs. Ground State", "top_Jagged1_FC")) %>% 
+  dplyr::mutate(View2 = ifelse(Var2 == "8h + 72h", "", paste0("_",Var2))) %>% 
+  dplyr::mutate(View1 = paste0(View1,View2)) %>% 
+  dplyr::mutate(Var3 = ifelse(Var3 == "Upregulated", "up", "down")) %>% 
+  dplyr::select(-View2)
+
+knitr::kable(normal_hits,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+```
+
+
+```{r fig.width=8, fig.height=8}
+
+comparison <- c("Notch On vs. Ground State", "Ground State vs. Notch Off", "Notch On vs. Notch Off")
+timepoints <- c("8h", "72h")
+regulation <- c("Up", "Down")
+
+comparisons_2 <- expand.grid(comparison, timepoints, regulation, comparison, timepoints, regulation) #
+
+comparisons_2 <- comparisons_2 %>% 
+  dplyr::left_join(p_val_dist %>% 
+                     dplyr::rename(p_val_dist_x = p_val_dist)) %>% 
+  dplyr::left_join(p_val_dist %>% 
+                     dplyr::rename(Var4 = Var1,
+                            Var5 = Var2, 
+                            p_val_dist_y = p_val_dist)) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(p_val_dist = ifelse(all(p_val_dist_x, p_val_dist_y), TRUE, FALSE)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-p_val_dist_x, -p_val_dist_y)
+# calculate intersections
+
+comparison <- c("top_Jagged1_FC", "top_DAPT_FC", "top_Jagged1_DAPT")
+timepoints <- c("_8h", "_72h")
+regulation <- c("Upregulated", "Downregulated")
+
+comparisons_2_view <- expand.grid(comparison, timepoints, regulation, comparison, timepoints, regulation)  %>% 
+  dplyr::mutate(Var1 = paste0(Var1, Var2),
+                Var4 = paste0(Var4, Var5)) %>% 
+  dplyr::select(-Var2, -Var5)
+
+n_genes1 <- c()
+n_genes2 <- c()
+n_intersection <- c()
+
+for(i in 1:nrow(comparisons_2_view)){
+  
+  genes1 <- get(comparisons_2_view$Var1[i]) %>% 
+                  dplyr::mutate(direction = ifelse(log2FoldChange > 0, "Upregulated", "Downregulated")) %>% 
+                  dplyr::filter(direction == !!comparisons_2_view$Var3[i]) %>% 
+                  pull(entrez)
+  
+  genes2 <- get(comparisons_2_view$Var4[i]) %>% 
+                  dplyr::mutate(direction = ifelse(log2FoldChange > 0, "Upregulated", "Downregulated")) %>% 
+                  dplyr::filter(direction == !!comparisons_2_view$Var6[i]) %>% 
+                  pull(entrez)
+  
+  intersection <- length(intersect(genes1, genes2))
+  
+  n_genes1 <- c(n_genes1, length(genes1))
+  n_genes2 <- c(n_genes2, length(genes2))
+  n_intersection <- c(n_intersection, intersection)
+}
+
+comparisons_2$n_genes1<- n_genes1
+comparisons_2$n_genes2 <- n_genes2
+comparisons_2$intersection <- n_intersection
+
+# remove identical rows (comparison against itself):
+
+# comparisons_2 <- comparisons_2 %>% 
+#   dplyr::filter(paste(Var1, Var2, Var3) != paste(Var4, Var5, Var6))
+
+# heatmap test:
+
+comparisons_2_n <- comparisons_2 %>% 
+  dplyr::mutate(Var1 = paste(Var1, Var2, Var3),
+                Var4 = paste(Var4, Var5, Var6)) %>% 
+  dplyr::select(-p_val_dist, -Var2, -Var3, -Var5, -Var6, -n_genes1, -n_genes2) %>%
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "intersection") %>% 
+  tibble::column_to_rownames("Var4") %>% 
+  as.matrix()
+
+comparisons_2_p <- comparisons_2 %>% 
+  dplyr::mutate(Var1 = paste(Var1, Var2, Var3),
+                Var4 = paste(Var4, Var5, Var6)) %>% 
+  dplyr::select(-intersection, -Var2, -Var3, -Var5, -Var6, -n_genes1, -n_genes2) %>%
+  dplyr::mutate(p_val_dist = ifelse(p_val_dist, "", "X")) %>% 
+  tidyr::pivot_wider(names_from = "Var1",
+                     values_from = "p_val_dist") %>% 
+  tibble::column_to_rownames("Var4") %>% 
+  as.matrix()
+
+col_fun_int = colorRamp2(c(0, max(comparisons_2_n[lower.tri(comparisons_2_n)])), col_heatmap[c(2,3)])
+
+# remove diagonal self comparisons
+
+rownames(comparisons_2_n)[1] <- ""
+colnames(comparisons_2_n)[ncol(comparisons_2_n)] <- ""
+
+hm_intersection <- Heatmap(comparisons_2_n, 
+        name = "Genes\nIntersection", 
+        width = ncol(comparisons_2_n)*unit(7, "mm"), 
+        height = nrow(comparisons_2_n)*unit(7, "mm"), 
+        rect_gp = gpar(type = "none"), 
+        # rect_gp = gpar(col = "black", lwd = 1),
+        cluster_rows = FALSE,
+        cluster_columns = FALSE,
+        row_names_side = "left",
+        col = col_fun_int,
+        cell_fun = function(j, i, x, y, width, height, fill) {
+          if(i > j){
+            grid.rect(x, y, width, height, gp = gpar(fill = col_fun_int(comparisons_2_n[i, j]),
+                                            lwd = 0.5, col = "grey"))
+            if(comparisons_2_p[i, j]=="X"){
+              grid.text(comparisons_2_p[i, j], x, y, gp = gpar(fontsize = 16))
+            }
+            if(comparisons_2_n[i, j]>100){
+              grid.rect(x, y, width, height, gp = gpar(fill = col_fun_int(comparisons_2_n[i, j]),
+                                                       lwd = 2, col = "black"))
+            }
+          }
+
+})
+
+print(hm_intersection)
+
+intersection_hits <- comparisons_2 %>% 
+  dplyr::filter(paste(Var1, Var2, Var3) != paste(Var4, Var5, Var6),
+                
+                p_val_dist,
+                intersection>100) %>% 
+  unite("Var1", Var1:Var3) %>% 
+  unite("Var4", Var4:Var6) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(Var_test = paste(sort(c(as.character(Var1), as.character(Var4))), collapse = " "))
+
+intersection_hits <- intersection_hits[!duplicated(intersection_hits$Var_test),] %>% 
+  dplyr::select(-Var_test) 
+
+intersection_hits <- intersection_hits %>% 
+  dplyr::mutate(View1 = str_replace(Var1, "Notch On vs. Notch Off", "top_Jagged1_DAPT"),
+                View2 = str_replace(Var4, "Notch On vs. Notch Off", "top_Jagged1_DAPT"),
+                View1 = str_replace(View1, "Ground State vs. Notch Off", "top_DAPT_FC"),
+                View2 = str_replace(View2, "Ground State vs. Notch Off", "top_DAPT_FC"),
+                View1 = str_replace(View1, "Notch On vs. Ground State", "top_Jagged1_FC"),
+                View2 = str_replace(View2, "Notch On vs. Ground State", "top_Jagged1_FC"),
+                Var2 = str_remove(View1, ".+\\_"),
+                View1 = str_remove(View1, "\\_(Up|Down)$"),
+                Var5 = str_remove(View2, ".+\\_"),
+                View2 = str_remove(View2, "\\_(Up|Down)$")) %>% 
+  dplyr::mutate(Var2 = ifelse(Var2 == "Up", "up", "down"),
+                Var5 = ifelse(Var5 == "Up", "up", "down"))
+
+
+knitr::kable(intersection_hits,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+#normal_hits
+
+# base::save.image(file = "part2_start.RData")
+```
+  
+# Coherence Score:
+
+## Calculation of background distribution of randomly chosen genes within the TCGA-BRCA cohort
+
+```{r, cache=TRUE, cache.lazy=FALSE}
+
+#base::load(file = "part2_start.RData")
+
+set.seed(12345)
+genes = colnames(cpm_mat)
+
+### --- Take 100000 randomly chosen genes from 3 to 50 genes and calculate coherence scores
+
+cs_df_TCGA = pbapply::pbsapply(c(3:100), function(size) {
+  random_signatures = replicate(sample(genes, size), n = 100000, simplify = FALSE)
+  
+  purrr::map_dbl(random_signatures, function(.x) {
+    dt = cpm_mat[, .x]
+    cors = cor(dt)
+    mean(cors[lower.tri(cors)], na.rm = TRUE)
+  })
+}, cl = 10)
+
+colnames(cs_df_TCGA) = c(3:100)
+
+cs_df_TCGA = cs_df_TCGA %>%
+  as.data.frame() %>%
+  tidyr::gather(key="size", value="cs") %>%
+  dplyr::mutate(size = forcats::fct_inorder(size))
+```
+
+
+```{r}
+
+cs_cut = cs_df_TCGA %>%
+  dplyr::group_by(size) %>%
+  dplyr::summarise(max_cs = max(cs, na.rm = TRUE),
+                   min_cs = min(cs, na.rm = TRUE),
+                   med_cs = median(cs, na.rm = TRUE))
+
+cs_q = cs_df_TCGA %>%
+  tidyr::nest(data=-size) %>%
+  dplyr::summarise(value = purrr::map(data, function(values) {
+    qs = purrr::map_dbl(c(0, .1, .5, .9, .95, .99, .999, .9999, 1), 
+                        ~quantile(x = values, probs=.x, na.rm = TRUE))
+    names(qs) = c("1", ".9", ".5", ".1", ".05", ".01", ".001", ".0001", "<.0001")
+    as.data.frame(qs) %>%
+      tibble::rownames_to_column("q_cut")
+    }),
+    size=size) %>%
+  tidyr::unnest(value) %>%
+  dplyr::mutate(trans = ifelse(q_cut != ".05", FALSE, TRUE))
+
+max_min = tibble(size = c(3:10, 20, 50)) %>%
+  dplyr::mutate(y_max = 1,
+                y_min = -1/(size - 1))
+
+cs_q = cs_q %>%
+  dplyr::mutate(q_cut = forcats::fct_inorder(q_cut))
+
+ggplot2::ggplot() +
+  ggplot2::geom_hline(yintercept = .2, color="red", size=.8,
+                      alpha=.3) +
+  ggplot2::geom_ribbon(data = max_min, aes(x=size, ymax=y_max, ymin=y_min),
+                       fill = "grey70", alpha=.4) +
+  ggplot2::geom_point(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+
+  ggplot2::geom_path(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, group=q_cut,
+                         linetype=trans)) +
+  ggplot2::geom_point(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+  ggplot2::theme_bw(base_size = 14) +
+  ggplot2::theme(legend.position = "bottom",
+                 plot.margin = unit(c(.1,.2,.1,.1), units = "in")) +
+  viridis::scale_color_viridis(discrete = T, option = "H",
+                               breaks = c("1", ".01", ".9", ".001", ".5", ".0001",
+                                          ".1", "<.0001", ".05")) +
+  ggplot2::scale_y_continuous(breaks = c(-.5, -.25, 0, .25, .5, .75, 1),
+                              expand = c(0, 0)) +
+  scale_x_continuous(limits = c(3, 50), expand = c(0, 0),
+                     breaks=c(3, 4, 6, 10, 20, 50),
+                     trans="log10") +
+  ggplot2::labs(x="Signature Size", y="Coherence Score") +
+  ggplot2::guides(color=guide_legend("Empirical p-value")) +
+  scale_linetype_manual(values=c("longdash", "solid"), guide=FALSE) +
+  scale_size_manual(values=c(.5, .5, .5, .5, 1, .5, .5, .5, .5), guide=FALSE)
+
+```
+
+## Optimizing gene set size by using the TCGA data set as a training cohort
+
+### Tuning of the the number of genes in the signature using TCGA breast cancer expression data
+
+Validation will be done in Oslo2 and METABRIC.  
+
+```{r}
+
+# base::load(file = "part2_start.RData")
+
+### --- Definition of the functions
+
+# coherence score
+
+coherence_score_function <- function(test_matrix, gene_set, return_dt = FALSE) {
+  dt = test_matrix[, intersect(colnames(test_matrix), gene_set)]
+  if(return_dt){
+    dt
+  } else {
+    cors = cor(dt)
+    data.frame(CS_mean = mean(cors[lower.tri(cors)], na.rm = TRUE),
+           CS_median = median(cors[lower.tri(cors)], na.rm = TRUE),
+           SD_cor = sd(cors[lower.tri(cors)], na.rm = TRUE),
+           SEM = sd(cors[lower.tri(cors)], na.rm = TRUE)/sqrt(length(cors[lower.tri(cors)])))
+  }
+
+}
+
+### Calculate modeled P Value from modeled distribution, depreciated
+
+get_modeled_pvalue <- function(distribution, coherence_score, gs_size){
+  cs_length <- distribution %>%
+    dplyr::filter(size == !!gs_size)
+  
+  ecdf_value <- 1.000000-ecdf(cs_length$cs)(coherence_score)
+  return(ecdf_value)
+}
+
+### Calculate empirical P value
+
+get_emp_pvalue <- function(distribution, coherence_score, gs_size){
+  cs_length <- distribution %>%
+    dplyr::filter(size == !!gs_size)
+  
+  cs_greater <- cs_length %>% 
+    dplyr::filter(cs > coherence_score)
+  
+  emp_pval <- nrow(cs_greater)/nrow(cs_length)
+  
+  return(emp_pval)
+}
+
+# get the gene names regarding input and rank
+
+get_gene_set <- function(ddseq_df, rank, direction){
+  
+  if(direction == "up"){
+    ddseq_df_sel <- ddseq_df %>%
+      dplyr::filter(log2FoldChange > 0) %>% 
+      dplyr::arrange(desc(log2FoldChange)) %>%
+      dplyr::mutate(rank = rank(-log2FoldChange)) 
+    
+    if(rank!="Inf"){
+      ddseq_df_sel <- ddseq_df_sel %>% 
+        dplyr::filter(rank <= !!rank)
+    }
+    
+  } else {
+    ddseq_df_sel <- ddseq_df %>%
+      dplyr::filter(log2FoldChange < 0) %>% 
+      dplyr::arrange(log2FoldChange) %>%
+      dplyr::mutate(rank = rank(-log2FoldChange)) 
+    
+      if(rank!="Inf"){
+        ddseq_df_sel <- ddseq_df_sel %>% 
+          dplyr::filter(rank <= !!rank)
+      }
+  }
+  
+  gene_set <- ddseq_df_sel %>% 
+    dplyr::select(symbol, log2FoldChange, padj, rank)
+  
+  return(gene_set)
+}
+
+# main function:
+
+select_signature <- function(test_matrix, 
+                             distribution, 
+                             ddseq_df, 
+                             direction = "up", 
+                             max_sign_size = 50, 
+                             min_sign_size = 3, 
+                             sign_max_size = 30,
+                             sign_min_size = 10,
+                             pval_cutoff = 0.001, 
+                             median_test = FALSE,
+                             exclude_p_cor = FALSE,
+                             title = "", 
+                             return_full_df = FALSE){
+  
+  rank_range <- seq(min_sign_size, max_sign_size)
+  
+  if(is.null(ncol(ddseq_df))){
+    
+    if(is.null(names(ddseq_df))){
+      names(ddseq_df) = c("DiffExp1", "DiffExp2")
+    }
+
+    if(direction == "up") {
+      direction1 = "up"
+      sign1 = 1
+      direction2 = "up"
+      sign2 = 1
+    } else if(direction == "down") {
+      direction1 = "down"
+      sign1 = -1
+      direction2 = "down"
+      sign2 = -1
+    } else if(direction == "up-down") {
+      direction1 = "up"
+      sign1 = 1
+      direction2 = "down"
+      sign2 = -1
+    } else if(direction == "down-up") {
+      direction1 = "down"
+      sign1 = -1
+      direction2 = "up"
+      sign2 = 1
+    }
+    
+    gene_sets_tested_1 <- get_gene_set(ddseq_df = ddseq_df[[1]], rank = "Inf", direction = direction1)
+    gene_sets_tested_2 <- get_gene_set(ddseq_df = ddseq_df[[2]], rank = "Inf", direction = direction2)
+
+    # get intersection:
+    
+    genes_intersection <- base::intersect(gene_sets_tested_1$symbol,
+                                            gene_sets_tested_2$symbol)
+    
+    if(length(genes_intersection)<max_sign_size){
+      if(length(genes_intersection)<min_sign_size){
+        warning(paste0("In the two selected differentially expression lists only ", length(genes_intersection), " genes are in the intersection, which is lower than the selected minimum signiture size of ",min_sign_size))
+        signature_df_selected <- data.frame(cs = NA,
+                                            CS_median = NA,
+                                            SD_cor = NA,
+                                            SEM = NA,
+                                            size = NA,
+                                            emp_p_value = NA,
+                                            genes = NA)
+        return(signature_df_selected)
+      }
+      max_sign_size = length(genes_intersection)
+    }
+    
+    # Use mean ranking of genes
+    
+    genes_intersection <- data.frame(genes_intersection = genes_intersection,
+                                     stringsAsFactors = FALSE) %>% 
+      inner_join(gene_sets_tested_1 %>% 
+                   dplyr::select(symbol, rank),
+                 by = c("genes_intersection" = "symbol")) %>% 
+      inner_join(gene_sets_tested_2 %>% 
+                   dplyr::select(symbol, rank),
+                 by = c("genes_intersection" = "symbol"))
+    
+    genes_intersection <- genes_intersection %>% 
+      rowwise() %>% 
+      dplyr::mutate(mean_rank = mean(c(rank.x, rank.y))) %>% 
+      ungroup() %>% 
+      dplyr::arrange(mean_rank)
+          
+    gene_sets_tested <- list()
+    
+    for(i in min_sign_size:max_sign_size){
+      gene_sets_tested[[as.character(i)]]$symbol <- genes_intersection$genes_intersection[1:i]
+    }
+    
+  } else {
+    
+    if(!direction %in% c("up", "down")){
+      stop("If only one differential expression data set is selected, you need to specify if you would like to analyze \"up\" or \"down\" regulated genes in the \"direction\" parameter")
+    }
+    # 
+    # gene_sets_tested <- lapply(rank_range, function(x) get_gene_set(ddseq_df = ddseq_df, rank = x, direction = direction))
+    # names(gene_sets_tested) <- as.character(rank_range)
+    
+    df_max_sign <- get_gene_set(ddseq_df = ddseq_df, rank = max_sign_size, direction = direction)
+    
+    gene_sets_tested <- list()
+
+    if(max_sign_size > nrow(df_max_sign)){
+       warning(paste0("The search space for the largest signature (", sign_max_size, ") is larger than the number of genes (", max_sign_size, ") of differentially expressed genes. The search space is reduced to a maximum of ", max_sign_size))
+      max_sign_size <- nrow(df_max_sign)
+    }
+    
+    if(max_sign_size < min_sign_size){
+      warning("In the selected differential gene expression data set are too few differentially expressed genes for the analysis")
+      signature_df_selected <- data.frame(cs = NA,
+                                            CS_median = NA,
+                                            SD_cor = NA,
+                                            SEM = NA,
+                                            size = NA,
+                                            emp_p_value = NA,
+                                            genes = NA)
+      return(signature_df_selected)
+    }
+    
+  for(i in min_sign_size:max_sign_size){
+      gene_sets_tested[[as.character(i)]]$symbol <- df_max_sign$symbol[1:i]
+  }
+
+  }
+
+  signature_df <- lapply(as.character(min_sign_size:max_sign_size), 
+                                         function(x) coherence_score_function(test_matrix = test_matrix,
+                                                                              gene_sets_tested[[x]]$symbol))
+  
+
+  
+  signature_df <- bind_rows(signature_df)
+  signature_df$size <- min_sign_size:max_sign_size
+  
+  if(median_test){
+    signature_df <- signature_df %>% 
+      dplyr::rename(cs = CS_median)
+  } else {
+        signature_df <- signature_df %>% 
+      dplyr::rename(cs = CS_mean)
+  }
+      
+  signature_df <- signature_df %>% 
+    as.data.frame() %>%  
+    rowwise() %>% 
+    dplyr::mutate(emp_p_value = get_emp_pvalue(distribution = !!distribution, cs, size)) %>% 
+    ungroup()
+  
+  if(return_full_df){
+    return(signature_df)
+  }
+  
+  if(max_sign_size >= sign_max_size){
+    signature_df_pre_selected <- signature_df %>% 
+      dplyr::filter(size <= sign_max_size & size >= sign_min_size)
+  } else {
+    warning(paste0("The search space for the largest signature (", sign_max_size, ") is larger than the number of genes (", max_sign_size, ") in the signature selection. The search space is reduced to a maximum of ", max_sign_size))
+    sign_max_size = max_sign_size
+    if(sign_max_size < sign_min_size){
+      warning(paste0("The search space for the smallest signature (", sign_min_size, ") is larger than the search space for the largest signature (", sign_max_size, "). The search space for the minimal signature size is reduced to ", sign_max_size))
+      sign_min_size <- sign_max_size
+    }
+    signature_df_pre_selected <- signature_df %>% 
+      dplyr::filter(size <= sign_max_size & size >= sign_min_size)
+  }
+  
+  if(any(signature_df_pre_selected$emp_p_value < pval_cutoff)){
+    
+    signature_df_selected <- signature_df_pre_selected %>%
+      dplyr::filter(emp_p_value < !!pval_cutoff) %>%
+      dplyr::filter(cs == max(cs)) 
+    
+    if("logFC" %in% colnames(signature_df_selected)){
+      signature_df_selected <- signature_df_selected %>%
+        dplyr::filter(abs(logFC) == max(abs(logFC)))
+    }
+    
+  } else {
+    signature_df_selected <- signature_df_pre_selected[signature_df_pre_selected$emp_p_value == min(signature_df_pre_selected$emp_p_value),]
+    signature_df_selected <- signature_df_selected[signature_df_selected$size == min(signature_df_selected$size),]
+    if(nrow(signature_df_selected)>1){
+      signature_df_selected <- signature_df_selected[signature_df_selected$logFC == max(abs(signature_df_selected$logFC)),]
+    }
+  }
+
+  signature_df_selected$genes <- list(gene_sets_tested[[as.character(signature_df_selected$size)]]$symbol)
+
+  ### correlation matrix:
+  
+  cor_dt <- coherence_score_function(test_matrix = test_matrix,
+                                  gene_sets_tested[[length(gene_sets_tested)]]$symbol,
+                                  return_dt = TRUE)
+  
+  genes_in_cor_dt <- gene_sets_tested[[length(gene_sets_tested)]]$symbol[gene_sets_tested[[length(gene_sets_tested)]]$symbol %in% colnames(cor_dt)]
+  
+  corr <- round(cor(cor_dt), 1)
+  p.mat <- cor_pmat(cor_dt)
+  
+  corr <- corr[match(genes_in_cor_dt, colnames(corr)),
+               match(genes_in_cor_dt, colnames(corr))]
+  
+  p.mat <- p.mat[match(genes_in_cor_dt, colnames(corr)),
+               match(genes_in_cor_dt, colnames(corr))]
+  
+  if(exclude_p_cor){
+    p_cor <- ggcorrplot(corr,
+                    colors = c(merck_colors[1], "white", merck_colors[2]), 
+                    p.mat = p.mat,
+                    insig = "blank") +
+      theme(axis.text.x = element_text(size=5),
+            axis.text.y = element_text(size=5)) +
+      labs(title = "Correlation plot, sorted by the ranking of genes\nInsignificant correlations are excluded (blank).")
+    
+  } else {
+    p_cor <- ggcorrplot(corr,
+                  colors = c(merck_colors[1], "white", merck_colors[2])) +
+      theme(axis.text.x = element_text(size=5),
+            axis.text.y = element_text(size=5))+
+      labs(title = "Correlation plot, sorted by the ranking of genes")
+  }
+  
+  cs_q_use <- cs_q %>% 
+    dplyr::mutate(size = as.numeric(size)) %>% 
+    dplyr::rename(cs = qs) %>% 
+    dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+    dplyr::mutate(q_cut = as.numeric(as.character(factor(q_cut, levels = c(".5", ".05", ".0001"), 
+                                                         labels = c(0.5, 0.05, 0.0001))))) %>% 
+    dplyr::select(-trans) %>% 
+    dplyr::rename(emp_p_value = q_cut) %>% 
+    as.data.frame
+  
+  if(median_test){
+    cs_label <- "median Coherence Score"
+  } else {
+    cs_label <- "mean Coherence Score"
+  }
+  
+  p <- ggplot() +
+    ggplot2::geom_line(data = cs_q_use,
+                       aes(x=size, 
+                           y=cs, 
+                           group = emp_p_value,
+                           color = emp_p_value)) +
+    geom_point(data = signature_df %>% 
+                 dplyr::filter(size == !!signature_df_selected$size),
+               aes(x = size,
+                   y = cs),
+               color = "red",
+               shape = 8,
+               size = 6) +
+    geom_text(data = signature_df %>% 
+                 dplyr::filter(size == !!signature_df_selected$size),
+               aes(x = size,
+                   y = cs,
+                   label = paste("CS =", signif(cs, digits = 3))), 
+              position = position_nudge(y = 0.1),
+              color = "black",
+              size = 3) +
+    geom_text(data = signature_df %>% 
+                 dplyr::filter(size == !!signature_df_selected$size),
+               aes(x = size,
+                   y = cs,
+                   label = paste("P =", signif(emp_p_value, digits = 3))), 
+              position = position_nudge(y = - 0.1),
+              color = "black",
+              size = 3) +
+    geom_errorbar(data = signature_df,
+                  aes(x = size,
+                      ymin=cs-SEM, 
+                      ymax=cs+SEM,
+                      color = emp_p_value), 
+                  width=.2,
+                 position=position_dodge(0.05)) +
+    geom_point(data = signature_df,
+               aes(x = size,
+                   y = cs,
+                   color = emp_p_value),
+              size = 2,
+              shape = 16) +
+    scale_color_gradient2(
+      midpoint = 0.05,
+      limits=c(0,0.1),
+      breaks=c(0,0.05, 0.1),
+      na.value = merck_colors[1],
+      low = merck_colors[2],
+      high = merck_colors[1],
+      mid = merck_colors[3]) +
+    coord_cartesian(ylim = c(-0.5,1),
+                    xlim = c(3, max_sign_size)) +
+    labs(x = "Signature size",
+         y = cs_label,
+         color = "emp. P value",
+         title = title,
+         subtitle = "Tuning the number of signature genes")
+  
+  print(cowplot::plot_grid(p, p_cor, ncol=2))
+  #print(cowplot::plot_grid(p, p_cor, ncol=2, labels = c('A', 'B')))
+  return(signature_df_selected)
+}
+
+
+```
+ 
+# All comparisons that have a left skewed p-value distribution and a > 100 genes differentially expressed
+
+```{r, fig.width=10, fig.height=5, results='asis'}
+
+#base::load(file = "part2_start.RData")
+
+ddseq_normal <- data.frame()
+
+for(i in 1:nrow(normal_hits)){
+  ddseq_normal <- ddseq_normal %>% 
+    bind_rows(data.frame(ddseq_df_1 = c(normal_hits[i, c("View1")])))
+}
+
+ddseq_normal_df <- ddseq_normal %>% 
+  dplyr::mutate(ddseq_df_2 = NA,
+                direction = normal_hits$Var3,
+                title = paste(normal_hits$Var1, normal_hits$Var2, normal_hits$Var3))
+
+
+ddseq_int_df <- data.frame(ddseq_df_1 = intersection_hits$View1,
+                           ddseq_df_2 = intersection_hits$View2,
+                           title = paste0("Intersection of ",
+                                         "\"",
+                                         str_replace_all(intersection_hits$Var1, "\\_", " "),
+                                         "\"",
+                                         " and ",
+                                         "\"",
+                                         str_replace_all(intersection_hits$Var4, "\\_", " "), 
+                                         "\"")
+)
+
+direction <- intersection_hits %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(direction =  paste(unique(c(Var2, Var5)), collapse = "-")) %>% 
+  dplyr::pull(direction)
+
+ddseq_int_df <- ddseq_int_df %>% 
+  dplyr::mutate(direction =  direction)
+                
+ddseq_df <- bind_rows(ddseq_normal_df,
+                      ddseq_int_df) %>% 
+  dplyr::mutate(Signature_name = paste0("signature_", seq_along(title)))
+
+ddseq_df %>% 
+  dplyr::select(Signature_name, title) %>% 
+  knitr::kable() %>% 
+  kableExtra::kable_classic()
+
+signature_test <- list()
+
+for(i in 1:nrow(ddseq_df)){
+#for(i in 14){
+  
+  cat(paste0("\n\n## Signature: ", ddseq_df[i, "title"], "\n"))
+
+  df_sets <- as.character(na.omit(c(ddseq_df[i,"ddseq_df_1"], ddseq_df[i,"ddseq_df_2"])))
+  
+  if(length(df_sets)>1){
+    df_sets_list <- list(get(df_sets[1]), get(df_sets[2]))
+    names(df_sets_list) <- df_sets
+  } else {
+    df_sets_list <- get(df_sets)
+  }
+  
+
+  signature_test[[i]] <- select_signature(test_matrix = cpm_mat, 
+                                               distribution = cs_df_TCGA, 
+                                               ddseq_df = df_sets_list, 
+                                               direction = ddseq_df[i, "direction"], 
+                                               max_sign_size = 50, 
+                                               min_sign_size = 3, 
+                                               sign_max_size = 30,
+                                               sign_min_size = 10,
+                                               pval_cutoff = 0.001, 
+                                               exclude_p_cor = TRUE,
+                                               median = FALSE,
+                                               title = ddseq_df[i, "title"],
+                                               return_full_df = FALSE)
+  
+  print(knitr::kable(signature_test[[i]],
+               format = "html", 
+               escape = F) %>%
+    kableExtra::kable_classic_2(full_width = F))
+  
+  cat("\n\n")
+}
+
+names(signature_test) <- ddseq_df$Signature_name
+
+```
+
+### Calculation of coherence scores and empirical P values in TCGA BRCA training data set
+
+```{r}
+
+### combine signatures in long data frame:
+
+gene_sets_opt_notch <- map_dfr(signature_test, ~ .x, .id = "id_geneset_name") %>% 
+  dplyr::rename(id_gene_symbol = genes,
+                meta_geneset_size = size) %>%
+  dplyr::select(id_gene_symbol, id_geneset_name, meta_geneset_size)
+
+gene_set_list_opt_notch = gene_sets_opt_notch$id_gene_symbol
+names(gene_set_list_opt_notch) = gene_sets_opt_notch$id_geneset_name
+
+```
+
+```{r}
+
+gene_set_list_opt_notch_list = purrr::map(gene_set_list_opt_notch, ~intersect(.x, colnames(cpm_mat)))
+
+cs = purrr::map_dfr(gene_set_list_opt_notch_list,  
+                    function(.x) { coherence_score_function(test_matrix = cpm_mat, gene_set = .x, )},
+                    .id = "id_geneset_name")
+  
+ges_df = tibble::tibble(id_geneset_name = names(gene_set_list_opt_notch_list),
+                           genes = unname(gene_set_list_opt_notch_list),
+                           size = purrr::map_int(gene_set_list_opt_notch_list, length))
+### 
+
+set.seed(12345)
+
+genes = colnames(cpm_mat)
+
+cs_optimized <- cs %>% 
+  left_join(ges_df %>% 
+              dplyr::select(-genes)
+            ) %>% 
+  dplyr::mutate(label = str_remove(id_geneset_name, "^sign[0-9]{1,2}\\_opt\\_"))
+
+cs_q <- cs_q %>% 
+  dplyr::filter(q_cut %in% c(".5", ".05", ".0001")) %>% 
+  dplyr::mutate(q_cut = droplevels(q_cut))
+
+
+ggplot2::ggplot() +
+  ggplot2::geom_hline(yintercept = .2, color="red", size=.8,
+                      alpha=.3) +
+  ggplot2::geom_ribbon(data = max_min, aes(x=size, ymax=y_max, ymin=y_min),
+                       fill = "grey70", alpha=.4) +
+  ggplot2::geom_point(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+
+  ggplot2::geom_path(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, group=q_cut,
+                         linetype=trans)) +
+  ggplot2::geom_point(data = cs_q, aes(x=as.integer(levels(size)[as.integer(size)]), y=qs, color=q_cut, size=q_cut)) +
+  ggplot2::theme_bw(base_size = 14) +
+  ggplot2::theme(legend.position = "bottom",
+                 plot.margin = unit(c(.1,.2,.1,.1), units = "in")) +
+  ggplot2::scale_color_manual(values = as.character(merck_colors[c(3,1,2)])) +
+  ggplot2::scale_y_continuous(breaks = c(-.5, -.25, 0, .25, .5, .75, 1),
+                              expand = c(0, 0)) +
+  ggplot2::scale_x_continuous(limits = c(3, 50), expand = c(0, 0),
+                     breaks=c(3, 4, 6, 10, 20, 50),
+                     trans="log10") +
+  ggplot2::labs(x="Signature Size", y="Coherence Score") +
+  ggplot2::guides(color=guide_legend("Empirical p-value")) +
+  scale_linetype_manual(values=c("longdash", "solid"), guide=FALSE) +
+  scale_size_manual(values=c(.5, .5, .5), guide=FALSE) +
+  ggplot2::geom_point(data = cs_optimized, aes(x=size, y=CS_mean), color = "red") +
+  ggrepel::geom_text_repel(data = cs_optimized, aes(x=size, y=CS_mean, label = label),
+                           max.overlaps = 20,
+                           size = 3)
+```
+
+## Calculation of empirical p-value for the signatures
+
+```{r}
+
+set.seed(12345)
+
+cs_optimized <- cs_optimized %>%
+  dplyr::select(-label) %>% 
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value = get_emp_pvalue(distribution = !!cs_df_TCGA, CS_mean, size)) %>% 
+  dplyr::ungroup()
+
+# knitr::kable(cs_optimized,
+#              format = "html", 
+#              escape = F) %>%
+#   kableExtra::kable_classic_2(full_width = F)
+
+```
+
+# Validation
+
+## METABRIC
+
+```{r, cache=TRUE, cache.lazy=FALSE}
+
+### Calculation of background distribution of randomly chosen genes within the METABRIC cohort
+
+set.seed(12345)
+
+genes_metabric = colnames(metabric_gene_expession_data_scaled_wide)
+
+### --- Take 100000 randomly chosen genes from 5 to 30 genes and calculate coherence scores
+
+cs_df_metabric = pbapply::pbsapply(c(3:100), function(size) {
+  random_signatures = replicate(sample(genes_metabric, size), n = 100000, simplify = FALSE)
+  
+  purrr::map_dbl(random_signatures, function(.x) {
+    dt = metabric_gene_expession_data_scaled_wide[, .x]
+    cors = cor(dt)
+    mean(cors[lower.tri(cors)], na.rm = TRUE)
+  })
+}, cl = 20)
+
+colnames(cs_df_metabric) = c(3:100)
+
+cs_df_metabric = cs_df_metabric %>%
+  as.data.frame() %>%
+  tidyr::gather(key="size", value="cs") %>%
+  dplyr::mutate(size = forcats::fct_inorder(size))
+
+```
+
+```{r}
+
+set.seed(12345)
+
+gene_set_list_opt_notch_list_metabric = purrr::map(gene_set_list_opt_notch, ~intersect(.x, colnames(metabric_gene_expession_data_scaled_wide)))
+
+cs_metabric = purrr::map_dfr(gene_set_list_opt_notch_list_metabric,  
+                    function(.x) { coherence_score_function(test_matrix = metabric_gene_expession_data_scaled_wide, gene_set = .x, )},
+                    .id = "id_geneset_name")
+
+ges_df_metabric = tibble::tibble(id_geneset_name = names(gene_set_list_opt_notch_list_metabric),
+                           genes = unname(gene_set_list_opt_notch_list_metabric),
+                           size = purrr::map_int(gene_set_list_opt_notch_list_metabric, length))
+
+cs_metabric <- cs_metabric %>% 
+  left_join(ges_df_metabric %>% 
+              dplyr::select(-genes)
+            ) %>% 
+  dplyr::mutate(label = str_remove(id_geneset_name, "^sign[0-9]{1,2}\\_"))
+
+
+cs_metabric <- cs_metabric %>%
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value_metabric = get_emp_pvalue(distribution = !!cs_df_metabric, coherence_score = CS_mean, gs_size = size)) %>% 
+  dplyr::ungroup()
+
+# knitr::kable(cs_metabric %>% 
+#                dplyr::select(-label),
+#              format = "html", 
+#              escape = F) %>%
+#   kableExtra::kable_classic_2(full_width = F)
+```
+
+## Oslo2
+
+```{r, cache=TRUE, cache.lazy=FALSE}
+
+### Calculation of background distribution of randomly chosen genes within the Oslo2 cohort
+
+set.seed(12345)
+
+genes_Oslo2 = colnames(Oslo2_gene_expession_data_wide)
+
+### --- Take 100000 randomly chosen genes from 5 to 30 genes and calculate coherence scores
+
+cs_df_Oslo2 = pbapply::pbsapply(c(3:100), function(size) {
+  random_signatures = replicate(sample(genes_Oslo2, size), n = 100000, simplify = FALSE)
+  
+  purrr::map_dbl(random_signatures, function(.x) {
+    dt = Oslo2_gene_expession_data_wide[, .x]
+    cors = cor(dt)
+    mean(cors[lower.tri(cors)], na.rm = TRUE)
+  })
+}, cl = 20)
+
+colnames(cs_df_Oslo2) = c(3:100)
+
+cs_df_Oslo2 = cs_df_Oslo2 %>%
+  as.data.frame() %>%
+  tidyr::gather(key="size", value="cs") %>%
+  dplyr::mutate(size = forcats::fct_inorder(size))
+
+```
+
+```{r}
+
+gene_set_list_opt_notch_list_Oslo2 = purrr::map(gene_set_list_opt_notch, ~intersect(.x, colnames(Oslo2_gene_expession_data_wide)))
+
+cs_Oslo2 = purrr::map_dfr(gene_set_list_opt_notch_list_Oslo2,  
+                    function(.x) { coherence_score_function(test_matrix = Oslo2_gene_expession_data_wide, gene_set = .x, )},
+                    .id = "id_geneset_name")
+
+ges_df_Oslo2 = tibble::tibble(id_geneset_name = names(gene_set_list_opt_notch_list_Oslo2),
+                           genes = unname(gene_set_list_opt_notch_list_Oslo2),
+                           size = purrr::map_int(gene_set_list_opt_notch_list_Oslo2, length))
+
+
+cs_Oslo2 <- cs_Oslo2 %>% 
+  left_join(ges_df_Oslo2 %>% 
+              dplyr::select(-genes)
+            ) %>% 
+  dplyr::mutate(label = str_remove(id_geneset_name, "^sign[0-9]{1,2}\\_"))
+
+
+cs_Oslo2 <- cs_Oslo2 %>%
+  rowwise() %>% 
+  dplyr::mutate(emp_p_value_Oslo2 = get_emp_pvalue(distribution = !!cs_df_Oslo2, coherence_score = CS_mean, gs_size = size)) %>% 
+  dplyr::ungroup()
+
+# knitr::kable(cs_Oslo2 %>% 
+#                dplyr::select(-label),
+#              format = "html", 
+#              escape = F) %>%
+#   kableExtra::kable_classic_2(full_width = F)
+```
+
+## Comparison table:
+
+```{r}
+
+cs_all_optimized <- cs_optimized %>% 
+  dplyr::select(id_geneset_name,
+                signature_size = size,
+                cs_mean_TCGA = CS_mean,
+                cs_median_TCGA = CS_median,
+                sd_TCGA = SD_cor, 
+                SEM_TCGA = SEM,
+                emp_p_value_TCGA = emp_p_value) %>% 
+  dplyr::left_join(cs_metabric %>% 
+                     dplyr::select(id_geneset_name,
+                                   cs_mean_metabric = CS_mean,
+                                   cs_median_metabric = CS_median,
+                                   sd_metabric = SD_cor, 
+                                   SEM_metabric = SEM,
+                                   emp_p_value_metabric),
+                   by = "id_geneset_name") %>% 
+  dplyr::left_join(cs_Oslo2 %>% 
+                     dplyr::select(id_geneset_name,
+                                   cs_mean_Oslo2 = CS_mean,
+                                   cs_median_Oslo2 = CS_median,
+                                   sd_Oslo2 = SD_cor, 
+                                   SEM_Oslo2 = SEM,
+                                   emp_p_value_Oslo2),
+                   by = "id_geneset_name")
+
+
+knitr::kable(cs_all_optimized,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+DT::datatable(cs_all_optimized, 
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',
+          rownames = FALSE,
+          options = list(
+            dom = 'Bfrtip',
+            buttons = c('excel'),
+            headerCallback = DT::JS(
+              "function(thead) {",
+              "  $(thead).css('font-size', '0.7em');",
+              "}"
+              )
+            )
+          ) %>%
+  DT::formatStyle(columns = c(1:ncol(cs_all_optimized)),fontSize = '70%')
+
+```
+
+```{r}
+
+save(gene_set_list_opt_notch,
+     cs_all_optimized,
+     cs_df_Oslo2,
+     cs_df_metabric,
+     cs_df_TCGA,
+     cs_q,
+     cpm_mat_full, 
+     tpm_mat_full, 
+     metabric_gene_expession_data_scaled_wide_full, 
+     Oslo2_gene_expession_data_wide_full, 
+     file = "../RData/Part2.RData")
+
+```
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

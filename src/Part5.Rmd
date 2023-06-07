@@ -1,0 +1,841 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 5 - Broad Breast Cancer Data set, Differential Gene Expression"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part5.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+options(java.parameters = c("-XX:+UseConcMarkSweepGC", "-Xmx8192m"))
+gc()
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/part5/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     # if set to false, the code will be omitted
+	cache = FALSE                    # could be useful during the development of a new project
+	                                 #don't forget to exclude the cache folder in the .gitignore
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01_packages, results = 'hide'}
+
+library(tidyverse)      # load the tidyverse functionality, e.g. %>% or ggplot2
+library(vroom)          # Import txt files
+
+# publish the report
+
+library(markdown)
+library(rmarkdown)
+library(knitr)          # Also to present tables in a nice way
+
+# tables
+
+library(kableExtra)     # improve output for kable
+library(DT)             # good tool to present tables
+
+# plots
+
+library(ComplexHeatmap) # very good tool to draw heatmaps
+library(circlize)       
+library(viridis)        # Color Blind palette
+library(ggpubr)         
+
+# RNASeq
+library(PCAtools)
+library(uwot)
+library(Organism.dplyr)
+library(org.Hs.eg.db)
+library(TxDb.Hsapiens.UCSC.hg19.knownGene)
+library(limma)
+
+knitr::write_bib(file = '../src/part5.bib')
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+# Executive Summary
+
+**Introduction**
+
+We want to identify robust NOTCH signatures for the activation and inactivation of the NOTCH pathway. Therefore, the group of Urban Lendahl at the Karolinska Institutet, Stockholm, Schweden and the group of Dirk Wienke at the Translational Innovation Platform Oncology and Immuno-Oncology at Merck KGaA, Darmstadt, Germany teamed up.  
+
+**Research Questions**
+
+<div class = "box">
+
+We want to validate the identified NOTCH signatures (published and experimental derived) for the activation and inactivation of the NOTCH pathway on an independent experimental data set. Therefore, we treated breast cancer cell lines from **basal**, **her2** and **luminal A** subtype either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time. Of each time point, cell line and treatment the transcriptome of one replicate was analyzed by RNASeq.  
+
+*Treatments:*  
+
+* normal (no treatment): "FC"
+* NOTCH ON (cultured on immobilised Jagged1 ligand): "Jagged1"
+* NOTCH OFF (blocked with GSI): "FC + DAPT"
+* Control: Jagged1 + DAPT
+
+For differential gene expression: Jagged1 (NOTCH high) vs. FC + DAPT (NOTCH low)  
+
+</div>
+  
+**Methods**
+
+Differential expression is analyzed following the `limma` pipeline.  
+
+**Conclusion**  
+
+<div class = "box">
+The treatment effect is in comparison to the differences in the cell line background neglectible. We make use of this data set for validating the results of the training cohort.  To identify significant differentially expressed hits between the breast cancer subtypes, more replicates would have been needed.  
+</div>
+  
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `markdown` [@R-markdown] and `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and knitr [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].  
+Plots are drawn by `ggplot2` and `ggpubr` [@R-ggpubr].  
+Tables are drawn, using the kable functionality of the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT].  
+  
+**RNASeq Data Import**  
+The data was imported using vroom [@R-vroom] and subsequently imported via the `limma` pipeline [@limma2015; @R-limma]. Gene symbols were annotated using the `AnnotationDbi` [@R-AnnotationDbi; @R-AnnotationFilter], `org.Hs.eg.db` [@R-org.Hs.eg.db] and `TxDb.Hsapiens.UCSC.hg19.knownGene` [@R-TxDb.Hsapiens.UCSC.hg19.knownGene] by using `Organism.dplyr` [@R-Organism.dplyr].  
+Dimensionality of the data set was reduced by `PCAtools` [@R-PCAtools] and UMAPs generated by `uwot` [@R-uwot].  
+  
+
+# Dataimport
+
+```{r 02-load-data}
+
+load("../RData/Part4.RData")
+
+```
+
+# Differential Gene Expression Analysis
+
+## Whole Data Set
+
+```{r 03-DE, dev='png', results="asis"}
+
+############################# DIFFERENTIAL GENE EXPRESSION ANALYSIS ############################# 
+
+# --- Fit a linear model using weighted least squares for each gene
+limma.fit = limma::lmFit(limma.cpm, 
+                         limma.des,
+                         block=qnt.met_no_ctrl$condition_cell_line,
+                         correlation=limma.cor$consensus)
+
+############################# high vs. low (Jagged1 vs. DAPT) ############################# 
+
+# --- Comparisons between groups (log fold-changes) are obtained as contrasts
+# --- of these fitted linear models
+limma.con = limma::makeContrasts(#normal_low=group_1_normal-group_2_low,
+                                 #normal_high=group_1_normal-group_3_high,
+                                 high_low=group_3_high-group_2_low,
+                                 levels=base::colnames(limma.des))
+
+# --- Estimate contrasts for each gene
+limma.est = limma::contrasts.fit(limma.fit, contrasts=limma.con)
+
+# --- Apply empirical Bayes smoothing of standard errors (shrinks standard
+# --- errors that are much larger or smaller than those from other genes
+# --- towards the average standard error)
+limma.bay = limma::eBayes(limma.est, robust=T)
+
+# P-Value distribution
+hist(limma.bay$p.value,
+     main = "P-Value distribution in notch high vs. low in breast cancer subtypes")
+
+# --- Plot corrected mean-variance relationship
+#path = base::file.path(here::here(), 'res', 'qc_mean_variance_hl.pdf')
+#grDevices::pdf(path, width=7, height=7)
+limma::plotSA(limma.bay, main="Final model: Mean-variance trend")
+#grDevices::dev.off()
+
+# --- Get summary of differentially expressed genes in each contrast
+# --- We use "nestedF" since we want to recover genes that are modulated in
+# --- multiple contrasts, see https://support.bioconductor.org/p/20636/
+limma.tst = limma::decideTests(limma.bay, method='nestedF', adjust.method='fdr',
+                               p.value=0.05)
+
+# --- Look at numbers of DE genes after multiple-testing correction
+
+cat("**Number of DE genes after multiple-testing correction**")
+base::summary(limma.tst)
+
+# normal_low normal_high high_low
+#        high_low
+# Down          1
+# NotSig    16554
+# Up           15
+
+limma.bay_df <- topTable(limma.bay, coef = "high_low", number=Inf, p.value=0.05, sort.by="logFC") %>%
+  rownames_to_column("symbol")
+
+DT::datatable(limma.bay_df %>% 
+          mutate_if(is.numeric, ~signif(., 2)), 
+            class = 'cell-border stripe', 
+            extensions = 'Buttons',
+            rownames = FALSE,
+            options = list(
+            dom = 'Bfrtip',
+            buttons = c('excel'),
+            headerCallback = DT::JS(
+              "function(thead) {",
+              "  $(thead).css('font-size', '0.7em');",
+              "}"
+              )
+            ))  %>%
+  DT::formatStyle(columns = c(1:ncol(limma.bay_df)), fontSize = '70%')
+
+# --- Store single-gene results in Excel
+path.sin = base::file.path(here::here(), 'results', 'validation_Differential_Expression_Whole_Dataset.xlsx')
+writexl::write_xlsx(limma.bay_df, path.sin)
+```
+
+### Vulcaono Plot
+
+```{r 04-vulcano-plot, fig.width=4, fig.height=4}
+
+all_df <- topTable(limma.bay, coef = "high_low", number=Inf, p.value=1, sort.by="logFC")
+
+xlsx::write.xlsx(all_df,
+  file = "../results/DEG_19celllines.xlsx",
+  sheetName = "8h+72h",
+  col.names = TRUE,
+  row.names = TRUE,
+  showNA = FALSE)
+gc()
+
+# first remove the filtered genes (FDR=NA) and create a -log10(FDR) column
+filtTab <- all_df %>% 
+  rownames_to_column("SYMBOL") %>%
+    mutate(`-log10(FDR)` = -log10(adj.P.Val))
+
+ggplot(filtTab, aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL)) + 
+  theme_classic() + 
+    geom_point(aes(colour=adj.P.Val < 0.05), size=1) +
+  geom_text_repel(data = filtTab[filtTab$adj.P.Val < 0.05,],
+                  aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL),
+                  size = 3) +
+  scale_color_manual(values = merck_colors[c(1,6)]) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey") +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey")
+  
+```
+
+## 8h only
+
+### Count normalization with voom/limma
+
+Exclude cell lines with not enough datapoints for the contrasts "DAPT" and "Jagged1":
+
+```{r 05a-data-normalization-and-selection-8h, dev='png'}
+
+n_found_8h <- qnt.met_no_ctrl %>% 
+  dplyr::filter(condition_treatment %in% c("2_low", "3_high"),
+                condition_time == "8h") %>% 
+  dplyr::group_by(condition_cell_line) %>% 
+  dplyr::summarize(n = n()) %>% 
+  dplyr::mutate(condition_cell_line = as.character(condition_cell_line))
+
+n_found_8h <- qnt.met_no_ctrl %>% 
+  dplyr::select(condition_cell_line) %>% 
+  dplyr::distinct() %>% 
+  dplyr::filter(!condition_cell_line %in% !!n_found_8h$condition_cell_line) %>% 
+  dplyr::mutate(condition_cell_line = as.character(condition_cell_line)) %>% 
+  dplyr::mutate(n = 0) %>% 
+  dplyr::bind_rows(n_found_8h) %>% 
+  dplyr::mutate(comment = ifelse(n < 2, "missing data points", "complete")) %>% 
+  dplyr::select(-n) %>% 
+  dplyr::arrange(comment, condition_cell_line) 
+
+n_found_8h %>% 
+  kable(row.names = FALSE) %>% 
+  kableExtra::kable_classic()
+
+```
+
+
+```{r 05b-data-normalization-and-selection-8h, dev='png'}
+
+# --- Part 3: Count normalization with voom/limma
+
+# differential expression after 8h
+
+qnt.met_sel_8h <- qnt.met_no_ctrl[!qnt.met_no_ctrl$condition_cell_line %in% (n_found_8h %>% dplyr::filter(comment != "complete") %>% pull(condition_cell_line)),]
+qnt.met_sel_8h <- qnt.met_sel_8h[qnt.met_sel_8h$condition_time!="72h",]
+
+qnt.met_sel_8h$condition_cell_line <- droplevels(qnt.met_sel_8h$condition_cell_line)
+
+cell_lines_8h <- unique(qnt.met_sel_8h$condition_cell_line)
+
+qnt.mat_sel_8h <- qnt.mat_no_ctrl[,colnames(qnt.mat_no_ctrl) %in% qnt.met_sel_8h$sample_name]
+
+# --- Transform count data into DGEList and calculate normalization factors
+limma.dat_sel_8h = edgeR::DGEList(counts=qnt.mat_sel_8h, genes=qnt.ann2)
+limma.fac_sel_8h = edgeR::calcNormFactors(limma.dat_sel_8h, method='TMM')
+
+# --- Filter lowly expressed genes - use special rule:
+
+# at least 3 samples with a count of 10 or higher
+keep <- rowSums(limma.fac_sel_8h$counts >= 10) >= 3
+
+# limma.low_excl = base::which(base::apply(edgeR::cpm(limma.fac_excl), 1, base::max) < 1)
+# limma.fac_excl = limma.fac_excl[-limma.low_excl, ]
+limma.fac_sel_8h = limma.fac_sel_8h[keep, ]
+
+
+# base::dim(limma.fac_sel_8h)
+# [1] 15452    42
+
+# --- Prepare lib-prep batch effect and group factor for model matrix
+limma.lib_sel_8h = qnt.met_sel_8h$condition_lib_prep
+limma.grp_trt_sel_8h = qnt.met_sel_8h$condition_treatment
+
+#limma.grp_time_sel = qnt.met_sel_8h$condition_time
+limma.grp_cell_line_8h = qnt.met_sel_8h$condition_cell_line
+limma.grp_subtype_8h = factor(as.character(qnt.met_sel_8h$condition_subtype))
+
+#limma.grp_sel <- paste0("group_",limma.grp_trt_sel,"_",limma.grp_time_sel)
+limma.grp_sel_8h <- paste0("group_",limma.grp_trt_sel_8h)
+
+# --- Count number of samples within each group
+# base::sort(base::table(limma.grp_sel_8h))
+
+# group_1_normal    group_2_low   group_3_high 
+#             14             14             14 
+
+# --- Make design,  controlling for library prep + time points
+#limma.des_sel = stats::model.matrix(~0+limma.grp_sel+limma.grp_time_sel)
+#limma.des_sel_8h = stats::model.matrix(~0+limma.grp_sel_8h+limma.lib_sel_8h+limma.grp_cell_line_8h)
+limma.des_sel_8h = stats::model.matrix(~0+limma.grp_sel_8h+limma.lib_sel_8h+limma.grp_subtype_8h)
+base::colnames(limma.des_sel_8h) = base::colnames(limma.des_sel_8h) %>%
+  stringr::str_replace_all('limma.grp_sel_8h', '') %>%
+  stringr::str_replace_all('limma.lib_sel_8h', 'lib_prep_') %>%
+  stringr::str_replace_all('limma.grp_subtype_8h', 'subtype_')
+
+
+# --- Apply normalization to convert the read counts to log2-cpm,
+# --- with associated weights, ready for linear modelling
+#path = base::file.path(here::here(), 'res', 'qc_mean_variance_1.pdf')
+#grDevices::pdf(path, width=7, height=7)
+limma.cpm_sel_8h = limma::voom(limma.fac_sel_8h, limma.des_sel_8h, plot=T)
+#grDevices::dev.off()
+
+# --- Tell the model about the blocked cell line design and
+# --- estimate the correlation between the duplicated cell lines
+limma.cor_sel_8h = limma::duplicateCorrelation(limma.cpm_sel_8h, limma.des_sel_8h,
+                                        block=qnt.met_sel_8h$condition_cell_line)
+# limma.cor_sel_8h$consensus
+# [1] 0.9493756
+
+# --- The intra cell line correlation will change the voom weights slightly,
+# --- so we run voom a second time ("double voom")
+#path = base::file.path(here::here(), 'res', 'qc_mean_variance_2.pdf')
+#grDevices::pdf(path, width=7, height=7)
+limma.cpm_sel_8h = limma::voom(limma.fac_sel_8h, limma.des_sel_8h,
+                        block=qnt.met_sel_8h$condition_cell_line,
+                        correlation=limma.cor_sel_8h$consensus,
+                        plot=T)
+#grDevices::dev.off()
+
+# --- Correlation is also updated
+limma.cor_sel_8h = limma::duplicateCorrelation(limma.cpm_sel_8h, limma.des_sel_8h,
+                                        block=qnt.met_sel_8h$condition_cell_line)
+# limma.cor_sel_8h$consensus
+# [1] 0.9504842
+
+```
+
+### Differential Expression Analysis
+
+```{r 06-DE-8h, dev='png'}
+
+############################# DIFFERENTIAL GENE EXPRESSION ANALYSIS ############################# 
+
+# --- Fit a linear model using weighted least squares for each gene
+limma.fit_sel_8h = limma::lmFit(limma.cpm_sel_8h, limma.des_sel_8h,
+                         block=qnt.met_sel_8h$condition_cell_line,
+                         correlation=limma.cor_sel_8h$consensus)
+
+############################# high vs. low (Jagged1 vs. DAPT) ############################# 
+
+# --- Comparisons between groups (log fold-changes) are obtained as contrasts
+# --- of these fitted linear models
+limma.con_hl_sel_8h = limma::makeContrasts(hl=group_3_high-group_2_low,
+                                           # nl=group_1_normal-group_2_low,
+                                           # hn=group_3_high-group_1_normal,
+                                 levels=base::colnames(limma.des_sel_8h))
+
+# --- Estimate contrasts for each gene
+limma.est_hl_sel_8h = limma::contrasts.fit(limma.fit_sel_8h, contrasts=limma.con_hl_sel_8h)
+
+# --- Apply empirical Bayes smoothing of standard errors (shrinks standard
+# --- errors that are much larger or smaller than those from other genes
+# --- towards the average standard error)
+limma.bay_hl_sel_8h = limma::eBayes(limma.est_hl_sel_8h, robust=T)
+
+# P-Value distribution
+hist(limma.bay_hl_sel_8h$p.value,
+     main = "P-Value distribution with notch high vs. low\nin 8h treated cell lines")
+
+# --- Plot corrected mean-variance relationship
+#path = base::file.path(here::here(), 'res', 'qc_mean_variance_hl.pdf')
+#grDevices::pdf(path, width=7, height=7)
+limma::plotSA(limma.bay_hl_sel_8h, main="Final model: Mean-variance trend - high vs. low")
+#grDevices::dev.off()
+
+# --- Get summary of differentially expressed genes in the single contrast
+
+limma.tst_hl_sel_8h = limma::decideTests(limma.bay_hl_sel_8h, method='nestedF', adjust.method='BH',
+                               p.value=0.05)
+
+# --- Look at numbers of DE genes after multiple-testing correction
+base::summary(limma.tst_hl_sel_8h)
+
+#           hl
+# Down       9
+# NotSig 15410
+# Up        33
+
+```
+
+### Notch on vs. Notch off
+
+```{r 07-genes-diff-8h, fig.width=12, fig.height=20}
+
+hl_8h_df <- limma::topTable(limma.bay_hl_sel_8h, coef="hl", number=Inf, adjust.method="BH", p.value=0.05, sort.by = "B") %>%
+  rownames_to_column("symbol")
+
+if(nrow(hl_8h_df)>0){
+  DT::datatable(hl_8h_df %>% arrange(desc(logFC)) %>% 
+          mutate_if(is.numeric, ~signif(., 2)), 
+            class = 'cell-border stripe', 
+            extensions = 'Buttons',
+            rownames = FALSE,
+            options = list(
+              dom = 'Bfrtip',
+              buttons = c('copy', 'csv', 'excel', 'pdf', 'print'),
+              headerCallback = DT::JS(
+                "function(thead) {",
+                "  $(thead).css('font-size', '0.7em');",
+                "}"
+                )
+              )
+            ) %>%
+    DT::formatStyle(columns = c(1:ncol(hl_8h_df)), fontSize = '70%')
+}
+
+
+# --- Store single-gene results in Excel
+path.sin = base::file.path(here::here(), 'results', 'validation_Differential_Expression_8h.xlsx')
+writexl::write_xlsx(hl_8h_df, path.sin)
+```
+
+`r sum(hl_8h_df$logFC>0)` genes are upregulated after 8h of Jagged1 treatment vs 8h of DAPT treatment and `r sum(hl_8h_df$logFC<0)` genes are downregulated.
+
+### Vulcaono Plot
+
+```{r 08-vulcano-plot, fig.width=4, fig.height=4}
+
+all_8h_df <- topTable(limma.bay_hl_sel_8h, coef = "hl", number=Inf, p.value=1, sort.by="logFC")
+
+xlsx::write.xlsx(all_8h_df,
+  file = "../results/DEG_19celllines.xlsx",
+  sheetName = "8h",
+  col.names = TRUE,
+  row.names = TRUE,
+  append = TRUE,
+  showNA = FALSE)
+gc()
+
+# first remove the filtered genes (FDR=NA) and create a -log10(FDR) column
+filtTab <- all_8h_df %>% 
+  rownames_to_column("SYMBOL") %>%
+    mutate(`-log10(FDR)` = -log10(adj.P.Val))
+
+ggplot(filtTab, aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL)) + 
+  theme_classic() + 
+  labs(title = "8h differentially regulated genes") +
+    geom_point(aes(colour=adj.P.Val < 0.05), size=1) +
+  geom_text_repel(data = filtTab[filtTab$adj.P.Val < 0.005,],
+                  aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL),
+                  size = 3) +
+  scale_color_manual(values = merck_colors[c(1,6)]) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey") +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey")
+  
+```
+
+## 72h only
+
+Exclude cell lines with not enough datapoints for the contrasts "DAPT" and "Jagged1":
+
+```{r 09a-data-normalization-and-selection-72h, dev='png'}
+
+n_found_72h <- qnt.met_no_ctrl %>% 
+  dplyr::filter(condition_treatment %in% c("2_low", "3_high"),
+                condition_time == "72h") %>% 
+  dplyr::group_by(condition_cell_line) %>% 
+  dplyr::summarize(n = n()) %>% 
+  dplyr::mutate(condition_cell_line = as.character(condition_cell_line))
+
+n_found_72h <- qnt.met_no_ctrl %>% 
+  dplyr::select(condition_cell_line) %>% 
+  dplyr::distinct() %>% 
+  dplyr::filter(!condition_cell_line %in% !!n_found_72h$condition_cell_line) %>% 
+  dplyr::mutate(condition_cell_line = as.character(condition_cell_line)) %>% 
+  dplyr::mutate(n = 0) %>% 
+  dplyr::bind_rows(n_found_72h) %>% 
+  dplyr::mutate(comment = ifelse(n < 2, "missing data points", "complete")) %>% 
+  dplyr::select(-n) %>% 
+  dplyr::arrange(comment, condition_cell_line) 
+
+n_found_72h %>% 
+  kable(row.names = FALSE) %>% 
+  kableExtra::kable_classic()
+
+```
+
+```{r 09b-data-normalization-and-selection-72h, dev='png'}
+
+# --- Part 3: Count normalization with voom/limma
+
+# differential expression after 72h
+
+qnt.met_sel_72h <- qnt.met_no_ctrl[!qnt.met_no_ctrl$condition_cell_line %in% (n_found_72h %>% dplyr::filter(comment != "complete") %>% pull(condition_cell_line)),]
+
+qnt.met_sel_72h <- qnt.met_sel_72h[qnt.met_sel_72h$condition_time!="8h",]
+
+qnt.met_sel_72h$condition_cell_line <- droplevels(qnt.met_sel_72h$condition_cell_line)
+qnt.met_sel_72h$condition_treatment <- droplevels(qnt.met_sel_72h$condition_treatment)
+
+cell_lines_72h <- unique(qnt.met_sel_72h$condition_cell_line)
+
+qnt.mat_sel_72h <- qnt.mat_no_ctrl[,colnames(qnt.mat_no_ctrl) %in% qnt.met_sel_72h$sample_name]
+
+# --- Transform count data into DGEList and calculate normalization factors
+limma.dat_sel_72h = edgeR::DGEList(counts=qnt.mat_sel_72h, genes=qnt.ann2)
+limma.fac_sel_72h = edgeR::calcNormFactors(limma.dat_sel_72h, method='TMM')
+
+# --- Filter lowly expressed genes - use special rule:
+
+# at least 3 samples with a count of 10 or higher
+keep <- rowSums(limma.fac_sel_72h$counts >= 10) >= 3
+limma.fac_sel_72h = limma.fac_sel_72h[keep, ]
+
+# base::dim(limma.fac_sel_72h)
+# [1] 15520    35
+
+# --- Prepare lib-prep batch effect and group factor for model matrix
+limma.lib_sel_72h = qnt.met_sel_72h$condition_lib_prep
+limma.grp_trt_sel_72h = qnt.met_sel_72h$condition_treatment
+limma.grp_cell_line_72h = qnt.met_sel_72h$condition_cell_line
+limma.grp_subtype_72h = factor(as.character(qnt.met_sel_72h$condition_subtype))
+
+limma.grp_sel_72h <- paste0("group_",limma.grp_trt_sel_72h)
+
+# --- Count number of samples within each group
+# base::sort(base::table(limma.grp_sel_72h))
+
+# group_1_normal    group_2_low   group_3_high 
+#             15             16             16 
+
+# --- Make design,  controlling for library prep + subtype
+
+limma.des_sel_72h = stats::model.matrix(~0+limma.grp_sel_72h+limma.lib_sel_72h+limma.grp_subtype_72h)
+#limma.des_sel_72h = stats::model.matrix(~0+limma.grp_sel_72h+limma.lib_sel_72h)
+
+
+base::colnames(limma.des_sel_72h) = base::colnames(limma.des_sel_72h) %>%
+  stringr::str_replace_all('limma.grp_sel_72h', '') %>%
+  stringr::str_replace_all('limma.lib_sel_72h', 'lib_prep_') %>%
+  stringr::str_replace_all('limma.grp_subtype_72h', 'subtype_')
+
+# --- Apply normalization to convert the read counts to log2-cpm,
+# --- with associated weights, ready for linear modelling
+
+limma.cpm_sel_72h = limma::voom(limma.fac_sel_72h, limma.des_sel_72h, plot=T)
+
+# --- Tell the model about the blocked cell line design and
+# --- estimate the correlation between the duplicated cell lines
+limma.cor_sel_72h = limma::duplicateCorrelation(limma.cpm_sel_72h, limma.des_sel_72h,
+                                        block=qnt.met_sel_72h$condition_cell_line)
+# limma.cor_sel_72h$consensus
+# [1] 0.9389917
+
+# --- The intra cell line correlation will change the voom weights slightly,
+# --- so we run voom a second time ("double voom")
+
+limma.cpm_sel_72h = limma::voom(limma.fac_sel_72h, limma.des_sel_72h,
+                        block=qnt.met_sel_72h$condition_cell_line,
+                        correlation=limma.cor_sel_72h$consensus,
+                        plot=T)
+
+# --- Correlation is also updated
+limma.cor_sel_72h = limma::duplicateCorrelation(limma.cpm_sel_72h, limma.des_sel_72h,
+                                        block=qnt.met_sel_72h$condition_cell_line)
+# limma.cor_sel_72h$consensus
+# [1] 0.9400665
+
+```
+
+### Differential Expression Analysis
+
+```{r 10-DE-72h, dev='png'}
+
+############################# DIFFERENTIAL GENE EXPRESSION ANALYSIS ############################# 
+
+# --- Fit a linear model using weighted least squares for each gene
+limma.fit_sel_72h = limma::lmFit(limma.cpm_sel_72h, limma.des_sel_72h,
+                         block=qnt.met_sel_72h$condition_cell_line,
+                         correlation=limma.cor_sel_72h$consensus)
+
+############################# high vs. low (Jagged1 vs. DAPT) ############################# 
+
+# --- Comparisons between groups (log fold-changes) are obtained as contrasts
+# --- of these fitted linear models
+limma.con_hl_sel_72h = limma::makeContrasts(hl=group_3_high-group_2_low,
+                                          # nl=group_1_normal-group_2_low,
+                                          # hn=group_3_high-group_1_normal,
+                                 levels=base::colnames(limma.des_sel_72h))
+
+# --- Estimate contrasts for each gene
+limma.est_hl_sel_72h = limma::contrasts.fit(limma.fit_sel_72h, contrasts=limma.con_hl_sel_72h)
+
+# --- Apply empirical Bayes smoothing of standard errors (shrinks standard
+# --- errors that are much larger or smaller than those from other genes
+# --- towards the average standard error)
+limma.bay_hl_sel_72h = limma::eBayes(limma.est_hl_sel_72h, robust=T)
+
+# P-Value distribution
+hist(limma.bay_hl_sel_72h$p.value,
+     main = "P-Value distribution with notch high vs. low\nin 72h treated cell lines")
+
+# --- Plot corrected mean-variance relationship
+
+limma::plotSA(limma.bay_hl_sel_72h, main="Final model: Mean-variance trend - high vs. low")
+
+# --- Get summary of differentially expressed genes in the single contrast
+limma.tst_hl_sel_72h = limma::decideTests(limma.bay_hl_sel_72h, adjust.method='BH',
+                               p.value=0.05)
+
+# --- Look at numbers of DE genes after multiple-testing correction
+base::summary(limma.tst_hl_sel_72h)
+
+#           hl
+# Down     108
+# NotSig 15608
+# Up        90
+
+```
+
+### Notch on vs. Notch off
+
+```{r 11-genes-diff-72h}
+
+hl_72h_df <- limma::topTable(limma.bay_hl_sel_72h, coef="hl", number=Inf, adjust.method="BH", p.value=0.05, sort.by = "B") %>%
+  rownames_to_column("symbol")
+
+if(nrow(hl_72h_df)>0){
+  DT::datatable(hl_72h_df %>% arrange(desc(logFC)) %>% 
+          mutate_if(is.numeric, ~signif(., 2)), 
+            class = 'cell-border stripe', 
+            extensions = 'Buttons',
+            rownames = FALSE,
+            options = list(
+              dom = 'Bfrtip',
+              buttons = c('excel'),
+              headerCallback = DT::JS(
+                "function(thead) {",
+                "  $(thead).css('font-size', '0.7em');",
+                "}"
+                )
+              )
+            ) %>%
+    DT::formatStyle(columns = c(1:ncol(hl_72h_df)), fontSize = '70%')
+}
+
+
+# --- Store single-gene results in Excel
+path.sin = base::file.path(here::here(), 'results', 'validation_Differential_Expression_72h.xlsx')
+writexl::write_xlsx(hl_8h_df, path.sin)
+```
+
+`r sum(hl_72h_df$logFC>0)` genes are upregulated after 72h of Jagged1 treatment vs the ground state after 72h and `r sum(hl_72h_df$logFC<0)` genes are downregulated.
+
+### Vulcaono Plot
+
+```{r 12-vulcano-plot, fig.width=4, fig.height=4}
+
+all_72h_df <- topTable(limma.bay_hl_sel_72h, coef = "hl", number=Inf, p.value=1, sort.by="logFC")
+
+xlsx::write.xlsx(all_72h_df,
+  file = "../results/DEG_19celllines.xlsx",
+  sheetName = "72h",
+  col.names = TRUE,
+  row.names = TRUE,
+  append = TRUE,
+  showNA = FALSE)
+gc()
+
+# first remove the filtered genes (FDR=NA) and create a -log10(FDR) column
+filtTab <- all_72h_df %>% 
+  rownames_to_column("SYMBOL") %>%
+    mutate(`-log10(FDR)` = -log10(adj.P.Val))
+
+ggplot(filtTab, aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL)) + 
+  theme_classic() + 
+  labs(title = "72h differentially regulated genes") +
+    geom_point(aes(colour=adj.P.Val < 0.05), size=1) +
+  geom_text_repel(data = filtTab[filtTab$adj.P.Val < 0.005,],
+                  aes(x = logFC, 
+                    y=`-log10(FDR)`,
+                    label = SYMBOL),
+                  size = 3) +
+  scale_color_manual(values = merck_colors[c(1,6)]) +
+  geom_hline(yintercept = -log10(0.05),
+             linetype = "dashed",
+             color = "grey") +
+  geom_vline(xintercept = 0,
+             linetype = "dashed",
+             color = "grey")
+  
+```
+
+```{r 13-save}
+# Save everything needed:
+
+validation_res_Jagged1_DAPT = all_df
+validation_res_Jagged1_DAPT_8h = all_8h_df
+validation_res_Jagged1_DAPT_72h = all_72h_df
+validation_TPM = qnt.mat_tpm_agg_log2
+validation_met <- qnt.met
+validation_subtypes <- met.sub
+
+save(validation_res_Jagged1_DAPT,
+     validation_res_Jagged1_DAPT_8h, 
+     validation_res_Jagged1_DAPT_72h, 
+     validation_TPM,
+     validation_met,
+     validation_subtypes,
+     file = "../RData/Part5.RData")
+
+```
+
+
+# Discussion of the Results and Recommendations
+
+Differentially expressed genes have been identified in all, 8h only and 72h treatment conditions.  
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

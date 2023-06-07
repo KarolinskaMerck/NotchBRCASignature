@@ -1,0 +1,1420 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 7a - Evaluation of NOTCH signatures in public patient cohorts"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part7a.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  
+	fig.width = 6,
+	dpi = 150,                       
+	dev = c("png"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part7a/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+
+library(readxl)
+library(xlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(ggnewscale)
+library(cowplot)
+library(circlize)
+library(ggthemes)
+library(ComplexHeatmap)
+
+library(rmarkdown)
+library(DT)
+
+library(rstatix)
+
+library(viridis)
+
+# Merck X-Omics Platform:
+
+library(ProfilerAPI2)
+# library(xopdata)
+# 
+# getsrc <- xopdata::get_src()
+
+# Citations:
+
+knitr::write_bib(file = 'part7a.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+all_subtype_colors <- c(subtype_colors, c("lumb" = as.character(merck_colors[4])))
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+batch_colors <- merck_colors[c(5,9)]
+names(batch_colors) <- c("Validation", "Training")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+</div>
+  
+**Methods**
+
+1. Correlation of the public and study derived signatures in public data sets to tumor purity / immune infiltration.
+2. Testing of the PAM50-subtypes and Hormone-Receptor status against the signatures
+3. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
+4. Understand the relation of the signatures against each other.  
+
+**Conclusion**  
+
+<div class = "box">
+
+Even with relatively high coherence scores, the signatures by Vilimas et al. and Klinakis et al. show high correlation with immune infiltration. The only measure, the 20-gene Notch Signature does not show significance was the identification of the hormone status of the patient by applying the signature score. The basal-like status on the other hand could be significantly identified. In all measures together, our signature was able to show its value in the breast cancer setting.
+The 20-gene Notch Signature correlates best in all three patient data sets with the Biocarta Notch signature and the signature developed by Braune et al. 2016. 
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], `ggrepel` [@R-ggrepel] and `ggnewscale` [@R-ggnewscale].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT].  
+
+**Statistics**  
+Statistics where calculated using the `rstatix` package [@R-rstatix].  
+
+# Load Data
+
+Load only necessary data to allow these analyses:  
+
+```{r 02-load_previous_data}
+
+base::load("../RData/Part2.RData")
+
+rm(gene_set_list_opt_notch,
+   cs_all_optimized,
+   cs_df_Oslo2,
+   cs_df_metabric,
+   cs_df_TCGA,
+   cpm_mat_full, 
+   tpm_mat_full, 
+   metabric_gene_expession_data_scaled_wide_full, 
+   Oslo2_gene_expession_data_wide_full)
+
+base::load("../RData/Part3.RData")
+base::load("../RData/Part6.RData")
+
+```
+
+# Correlation of signatures to tumor purity / immune infiltration
+
+## Load clinical data sets
+
+### Data Sources
+
+```{r 03-data_sources, cache=TRUE}
+
+gene_universe <- unique(c(unlist(gs.list.published_notch), unlist(gs.list.opt_notch)))
+
+# Internal Access to Data Lake
+# Data sets as described in the manuscript
+
+api = ProfilerAPI2::profiler_api(profile = "myprofile")   ## needed for Rmarkdown connection to ProfilerAPI2
+con <- api$conn
+
+# load TCGA data:
+
+## TMM normalized expression data
+id_xena_tcga <- "merck_tcga_rna_wtstmm_gexp_21q2_prod_kreis_2"
+
+expr_xena_tcga_tmm <- api$conn %>%
+  tbl(id_xena_tcga) %>% 
+  dplyr::filter(sample_status == "primary tumor",
+                id_gene_symbol %in% gene_universe,
+                id_tcga_cohort == "BRCA") %>% 
+  dplyr::select(id_tcga_participant_barcode, id_gene_symbol, quant_tmm_tpm) %>% 
+  dplyr::collect()
+
+id_xena_tcga_wts <- "xena_tcga_rna_wts_gexp_20q1_prod_schelhorn_2"
+
+expr_xena_tcga_db <-  api$conn %>%
+  tbl(id_xena_tcga_wts) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  dplyr::select(id_tcga_participant_barcode, meta_source, meta_measurement) %>% 
+  dplyr::collect() %>% 
+  dplyr::distinct()
+
+expr_xena_tcga_source <- unique(expr_xena_tcga_db$meta_source)
+expr_xena_tcga_measurement <- paste0(unique(expr_xena_tcga_db$meta_measurement), "|transformation:TMM_normalization|curator:kreis")
+
+## Clinical
+
+phe_tcga_1 <-  api$conn %>%
+  tbl(id_xena_tcga_wts) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                id_gene_symbol == "TP53",
+                sample_status != "solid tissue normal") %>% 
+  dplyr::select(id_tcga_participant_barcode, meta_source, meta_measurement,
+                sample_disease_stage, subject_sex,
+                sample_percent_lymphocyte, sample_percent_monocyte, sample_percent_neutrophil,
+                sample_percent_normal_cells, sample_percent_stromal_cells, sample_percent_tumor_cells) %>% 
+  dplyr::collect() %>% 
+  dplyr::distinct()
+
+phe_tcga_source <- unique(phe_tcga_1$meta_source)
+
+phe_tcga_1 <- phe_tcga_1 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# Simplify Stage:
+
+phe_tcga_1$sample_disease_stage <- str_remove(phe_tcga_1$sample_disease_stage, "[ABC]{1}$")
+phe_tcga_1$sample_disease_stage[phe_tcga_1$sample_disease_stage == "[Discrepancy]"] <- NA
+
+if_oncbi_tcga_multiple_multiple_publishedsubtypes <- "oncbi_tcga_multiple_multiple_publishedsubtypes_20q3_dev_rolfe_0"
+
+phe_tcga_2 <- api$conn %>%
+  tbl(if_oncbi_tcga_multiple_multiple_publishedsubtypes) %>% 
+  dplyr::filter(meta_sample_type != "solid_tissue_normal") %>% 
+  dplyr::select(id_tcga_participant_barcode, subtype_key, subtype_value) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                subtype_key %in% c("sub_menopause_status_xenadb",
+                                   "sub_her2_status_xenadb",
+                                   "sub_pr_status_xenadb",
+                                   "sub_breast_carcinoma_estrogen_receptor_status_xenadb",
+                                   "sub_pam50_26451490", "sub_pam50_call_xenadb")) %>% 
+  dplyr::collect() %>%
+  dplyr::distinct()
+
+phe_tcga_source <- paste0(phe_tcga_source,"|",paste(paste0("pmid:",na.omit(str_extract(str_remove(unique(phe_tcga_2$subtype_key), "^.+\\_"), "[0-9]+"))), collapse = "<br />"))
+phe_tcga_measurement <- "see publications"
+
+phe_tcga_2 <- phe_tcga_2 %>% 
+  tidyr::pivot_wider(names_from = "subtype_key",
+                     values_from = "subtype_value")
+
+phe_tcga_2$sub_pam50 <- ifelse(is.na(phe_tcga_2$sub_pam50_call_xenadb), phe_tcga_2$sub_pam50_26451490, phe_tcga_2$sub_pam50_call_xenadb)
+
+phe_tcga_2 <- phe_tcga_2 %>% 
+  dplyr::select(-sub_pam50_call_xenadb, -sub_pam50_26451490)
+
+# simplify columns:
+
+phe_tcga_2$sub_menopause_status_xenadb[phe_tcga_2$sub_menopause_status_xenadb == "Indeterminate (neither Pre or Postmenopausal)"] <- NA
+
+phe_tcga_2$sub_pr_status_xenadb[phe_tcga_2$sub_pr_status_xenadb == "Indeterminate"] <- NA
+
+phe_tcga_2$sub_breast_carcinoma_estrogen_receptor_status_xenadb[phe_tcga_2$sub_breast_carcinoma_estrogen_receptor_status_xenadb == "Indeterminate"] <- NA
+
+# Receptor Status:
+
+phe_tcga_2$Hormone_Receptor_Status <- ifelse(phe_tcga_2$sub_her2_status_xenadb == "Positive", "Her2 Positive",
+                                             ifelse(phe_tcga_2$sub_pr_status_xenadb == "Negative" &
+                                                      phe_tcga_2$sub_breast_carcinoma_estrogen_receptor_status_xenadb == "Negative", "Triple Negative", "Hormone Receptor Positive"))
+
+phe_tcga <- phe_tcga_1 %>% 
+  full_join(phe_tcga_2)
+
+### Add estimate scores:
+# From: https://bioinformatics.mdanderson.org/estimate/tables/breast_cancer_RNAseqV2.txt
+
+breast_cancer_Estimate_Scores <- read_delim("../data/breast_cancer_Estimate_Scores.txt",
+    delim = "\t", escape_double = FALSE,
+    trim_ws = TRUE)
+
+colnames(breast_cancer_Estimate_Scores) <- c("id_tcga_participant_barcode", "stromalscore_24113773", "immunescore_24113773", "estimatescore_24113773")
+
+breast_cancer_Estimate_Scores$id_tcga_participant_barcode <- str_remove(breast_cancer_Estimate_Scores$id_tcga_participant_barcode, "\\-[0-9]{2}$")
+
+breast_cancer_Estimate_Scores <- breast_cancer_Estimate_Scores %>%
+  dplyr::group_by(id_tcga_participant_barcode) %>%
+  dplyr::summarise(stromalscore_24113773 = mean(stromalscore_24113773),
+                   immunescore_24113773 = mean(immunescore_24113773),
+                   estimatescore_24113773 = mean(estimatescore_24113773)
+                   )
+
+phe_tcga <- phe_tcga %>%
+  dplyr::left_join(breast_cancer_Estimate_Scores)
+
+#### immune readouts:
+
+oncbi_tcga_rna_multiple_immunepublishedreadouts <- "oncbi_tcga_rna_multiple_immunepublishedreadouts_20q3_dev_rolfe_0"
+
+phe_tcga_immuno <- api$conn %>%
+  tbl(oncbi_tcga_rna_multiple_immunepublishedreadouts) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                immune_quantity_name %in% c("imm_tumor_purity_by_method_absolute_26634437",
+"imm_infiltration_timer_cd4_pos_t_cell_27549193",
+"imm_infiltration_timer_cd8_pos_t_cell_27549193",
+"imm_infiltration_timer_b_cell_27549193",
+"imm_infiltration_timer_dendritic_27549193",
+"imm_infiltration_timer_macrophage_27549193",
+"imm_infiltration_timer_neutrophil_27549193",
+"imm_infiltration_cibersort_b_cells_30154154",
+"imm_infiltration_cibersort_th_cells_30154154")) %>% 
+  dplyr::select(id_tcga_participant_barcode, immune_quantity_name, immune_quantity) %>% 
+  dplyr::collect()
+
+phe_tcga_immuno <- phe_tcga_immuno %>%
+  dplyr::group_by(id_tcga_participant_barcode, immune_quantity_name) %>%
+  dplyr::summarise(immune_quantity = mean(immune_quantity))
+
+phe_tcga_immuno <- phe_tcga_immuno %>% 
+  tidyr::pivot_wider(names_from = "immune_quantity_name",
+                     values_from = "immune_quantity")
+
+phe_tcga <- phe_tcga %>%
+  dplyr::left_join(phe_tcga_immuno)
+
+# load Metabric data
+
+## Expression
+
+
+id_metabric <- "cbioportal_metabric_rna_microarray_gexp_22q1_prod_geist_0"
+
+expr_cbioportal_metabric <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::select(-id_gene_entrez_id) %>% 
+  dplyr::filter(id_gene_symbol %in% gene_universe) %>% 
+  dplyr::collect()
+
+expr_cbioportal_metabric_source <- unique(expr_cbioportal_metabric$meta_source)
+expr_cbioportal_metabric_measurement <- unique(expr_cbioportal_metabric$meta_measurement)
+
+expr_cbioportal_metabric <- expr_cbioportal_metabric %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+## Clinical
+
+id_cbioportal_metabric_phe_cdr_dem <- "cbioportal_metabric_phe_cdr_dem_22q1_prod_geist_0"
+
+phe_cbioportal_metabric <- api$conn %>%
+  tbl(id_cbioportal_metabric_phe_cdr_dem) %>% 
+  dplyr::select(id_patient_id, age_at_diagnosis_27161491, laterality_27161491, inferred_menopausal_state_27161491, cellularity_27161491, purity_27161491, stromalscore_24113773, immunescore_24113773, estimatescore_24113773, cellularity_27161491, er_ihc_27161491, her2_snp6_27161491, threegene_27161491, pam50_22522925, claudin_subtype_27161491, meta_source, meta_measurement) %>% 
+  dplyr::collect()
+
+phe_cbioportal_metabric_source <- unique(phe_cbioportal_metabric$meta_source)
+phe_cbioportal_metabric_measurement <- unique(phe_cbioportal_metabric$meta_measurement)
+
+phe_cbioportal_metabric <- phe_cbioportal_metabric %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# load Oslo2 data
+
+## Expression
+
+id_gse80999_oslo2_rna_microarray_gexp <- "gse80999_oslo2_rna_microarray_gexp_22q1_prod_geist_2"
+
+expr_gse80999_oslo2 <- api$conn %>%
+  tbl(id_gse80999_oslo2_rna_microarray_gexp) %>% 
+  dplyr::select(-id_gene_entrez_id) %>% 
+  dplyr::filter(id_gene_symbol %in% gene_universe) %>% 
+  dplyr::collect()
+
+expr_gse80999_oslo2_source <- unique(expr_gse80999_oslo2$meta_source)
+expr_gse80999_oslo2_measurement <- unique(expr_gse80999_oslo2$meta_measurement)
+
+expr_gse80999_oslo2 <- expr_gse80999_oslo2 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+## Clinical
+
+id_gse80999_oslo2_phe_cdr_dem <- "gse80999_oslo2_phe_cdr_dem_22q1_prod_geist_1"
+
+phe_gse80999_oslo2 <- api$conn %>%
+  tbl(id_gse80999_oslo2_phe_cdr_dem) %>%  
+  dplyr::select(id_patient_id, id_geoid, stromalscore_24113773, immunescore_24113773, estimatescore_24113773, er_ihc_28356166, her2_ihc_cish_28356166, pam50_28356166, claudinlow_32286297, pam50tocl_32286297, meta_source, meta_measurement) %>% 
+  dplyr::collect()
+
+phe_gse80999_oslo2_source <- unique(phe_gse80999_oslo2$meta_source)
+phe_gse80999_oslo2_measurement <- unique(phe_gse80999_oslo2$meta_measurement)
+
+phe_gse80999_oslo2 <- phe_gse80999_oslo2 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# Data Sources
+
+format_category <- function(x) {
+  x <- stringr::str_replace_all(x, "\\|", "<br /><strong>")
+  x <- paste0("<strong>",x)
+  x <- stringr::str_replace_all(x, "\\:", "\\:</strong> ")
+  x <- stringr::str_replace_all(x, "_", " ")
+  x
+}
+
+# First Data Source
+Data_Sources <- data.frame(Type = "METABRIC - Expression Data",
+                           Source = format_category(expr_cbioportal_metabric_source),
+                           Measurement = format_category(expr_cbioportal_metabric_measurement))
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "METABRIC - clinical annotation",
+               Source = format_category(phe_cbioportal_metabric_source),
+               Measurement = format_category(phe_cbioportal_metabric_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2 - Expression Data",
+               Source = format_category(expr_gse80999_oslo2_source),
+               Measurement = format_category(expr_gse80999_oslo2_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2 - clinical annotation",
+               Source = format_category(phe_gse80999_oslo2_source),
+               Measurement = format_category(phe_gse80999_oslo2_measurement))
+  )
+
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "TCGA - Expression Data",
+               Source = format_category(expr_xena_tcga_source),
+               Measurement = format_category(expr_xena_tcga_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "TCGA - clinical annotation",
+               Source = format_category(phe_tcga_source),
+               Measurement = format_category(phe_tcga_measurement))
+  )
+
+knitr::kable(Data_Sources,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::row_spec(1:nrow(Data_Sources), underline = F, extra_css = "border-bottom: 1px solid;") %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+```
+
+### Calculate signature scores
+
+```{r 04-calculate_signature_scores}
+
+# scale expression
+
+expr_xena_tcga_tmm <- expr_xena_tcga_tmm %>% 
+  dplyr::rename(patient_id = id_tcga_participant_barcode) %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled_exprs = as.numeric(scale(log2(quant_tmm_tpm+1)))) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-quant_tmm_tpm)
+  
+expr_cbioportal_metabric <- expr_cbioportal_metabric %>% 
+  dplyr::rename(patient_id = id_patient_id) %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled_exprs = as.numeric(scale(quant_logmfi))) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-quant_logmfi)
+
+# oslo2 is already scaled
+
+expr_gse80999_oslo2 <- expr_gse80999_oslo2 %>% 
+  dplyr::rename(patient_id = id_patient_id,
+                quant_scaled_exprs = quant_zlogmfi)
+
+signature_score <- function(x, df){
+  df %>% 
+    dplyr::filter(id_gene_symbol %in% x) %>%
+    dplyr::group_by(patient_id) %>% 
+    dplyr::summarise(quant_signature = mean(quant_scaled_exprs, na.rm = TRUE), .groups = "drop")
+}
+
+## TCGA
+ 
+sig.scores_tcga_published.notch <- map_dfr(gs.list.published_notch, ~signature_score(.x, df = expr_xena_tcga_tmm), .id = "id_geneset_name") %>% 
+  left_join(phe_tcga,
+            by = c("patient_id" = "id_tcga_participant_barcode")) %>% 
+  dplyr::distinct()
+
+sig.scores_tcga_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df = expr_xena_tcga_tmm), .id = "id_geneset_name") %>% 
+  left_join(phe_tcga,
+            by = c("patient_id" = "id_tcga_participant_barcode")) %>% 
+  dplyr::distinct()
+
+## Metabric
+
+sig.scores_metabric_published.notch <- map_dfr(gs.list.published_notch, ~signature_score(.x, df = expr_cbioportal_metabric), .id = "id_geneset_name") %>% 
+  left_join(phe_cbioportal_metabric,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+sig.scores_metabric_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df = expr_cbioportal_metabric), .id = "id_geneset_name") %>% 
+  left_join(phe_cbioportal_metabric,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+## Oslo2
+
+sig.scores_oslo2_published.notch <- map_dfr(gs.list.published_notch, ~signature_score(.x, df = expr_gse80999_oslo2), .id = "id_geneset_name") %>% 
+  left_join(phe_gse80999_oslo2,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+sig.scores_oslo2_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df = expr_gse80999_oslo2), .id = "id_geneset_name") %>% 
+  left_join(phe_gse80999_oslo2,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+rm(expr_xena_tcga_tmm, expr_cbioportal_metabric, expr_gse80999_oslo2)
+```
+
+## Signature correlations to clinical variables
+
+Usage of kendall-correlation (not necessary normal distributed test variables)
+
+```{r 05-calculate-continuous-correlations, cache=TRUE}
+
+clin.cor_tcga <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, where(is.numeric)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  rstatix::cor_test(
+    vars = "quant_signature",
+    method = "kendall"
+    ) %>% 
+  rstatix::adjust_pvalue(method = "BH")
+
+clin.cor_metabric <- sig.scores_metabric_published.notch %>% 
+  dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, where(is.numeric)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  rstatix::cor_test(
+    vars = "quant_signature",
+    method = "kendall"
+    ) %>% 
+  rstatix::adjust_pvalue(method = "BH")
+
+clin.cor_oslo2 <- sig.scores_oslo2_published.notch %>% 
+  dplyr::bind_rows(sig.scores_oslo2_opt.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, where(is.numeric)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  rstatix::cor_test(
+    vars = "quant_signature",
+    method = "kendall"
+    ) %>% 
+  rstatix::adjust_pvalue(method = "BH")
+
+```
+
+## wilcox-test with Signature and categorical variables (except pam50)
+
+For proper multiple-testing adjustment, we calculate the P values over all signatures and correct for multiple testing subsequently. Subsequently, these adjusted P values will be used in the figures.  
+
+```{r 06-calculate-categorical-correlations, cache=TRUE}
+
+sig.scores_tcga_cat <- sig.scores_tcga_published.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_opt.notch) %>% 
+  dplyr::select(id_geneset_name, quant_signature, where(is.character)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::select(-patient_id, -sub_pam50, -Hormone_Receptor_Status)
+
+clin.test_tcga <- list()
+
+for(i in colnames(sig.scores_tcga_cat)[-c(1:2)]) {
+  clin.test_tcga[[i]] <- sig.scores_tcga_cat %>% 
+    dplyr::group_by(id_geneset_name) %>% 
+    wilcox_test(data = ., as.formula(paste("quant_signature", i, sep = "~"))) %>% 
+    adjust_pvalue(method = "BH")  %>% 
+    add_significance() %>% 
+    dplyr::rename(var1 = ".y.") %>% 
+    dplyr::mutate(var2 = !!i) %>% 
+    dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+}
+
+clin.test_tcga <- bind_rows(clin.test_tcga)
+
+sig.scores_metabric_cat <- sig.scores_metabric_published.notch %>% 
+  dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+  dplyr::select(id_geneset_name, quant_signature, where(is.character)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::select(-patient_id, -pam50_22522925)
+
+clin.test_metabric <- list()
+
+for(i in colnames(sig.scores_metabric_cat)[-c(1:2)]) {
+  clin.test_metabric[[i]] <- sig.scores_metabric_cat %>% 
+    dplyr::group_by(id_geneset_name) %>% 
+    wilcox_test(data = ., as.formula(paste("quant_signature", i, sep = "~"))) %>% 
+    adjust_pvalue(method = "BH")  %>%
+    add_significance() %>% 
+    dplyr::rename(var1 = ".y.") %>% 
+    dplyr::mutate(var2 = !!i) %>% 
+    dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+}
+
+clin.test_metabric <- bind_rows(clin.test_metabric)
+
+sig.scores_oslo2_cat <- sig.scores_oslo2_published.notch %>% 
+  dplyr::bind_rows(sig.scores_oslo2_opt.notch) %>% 
+  dplyr::select(id_geneset_name, quant_signature, where(is.character)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::select(-patient_id, -id_geoid, -pam50_28356166)
+
+clin.test_oslo2 <- list()
+
+for(i in colnames(sig.scores_oslo2_cat)[-c(1:2)]) {
+  clin.test_oslo2[[i]] <- sig.scores_oslo2_cat %>% 
+    dplyr::group_by(id_geneset_name) %>% 
+    wilcox_test(data = ., as.formula(paste("quant_signature", i, sep = "~"))) %>% 
+    adjust_pvalue(method = "BH") %>% 
+    add_significance() %>% 
+    dplyr::rename(var1 = ".y.") %>% 
+    dplyr::mutate(var2 = !!i) %>% 
+    dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+}
+
+clin.test_oslo2 <- bind_rows(clin.test_oslo2)
+
+gc_results <- gc()
+```
+
+## Tumor purity - Estimate Scores
+
+Interpretation: Significant correlations (p.adj < 0.05 & correlation coefficient > 0.5
+
+### TCGA
+
+```{r 07-purity_plots_TCGA}
+
+plot_purity_list <- list()
+
+# Tumor Purity TCGA:
+
+for(i in focus_signatures){
+  
+  plot_list <- list()
+  
+  for(j in c("estimatescore_24113773",
+             "stromalscore_24113773",
+             "immunescore_24113773")){
+    
+    measure <- clin.cor_tcga %>% 
+      dplyr::filter(id_geneset_name == !!i,
+                    var2 == !!j) %>% 
+      dplyr::select(id_geneset_name, var2, cor, p.adj)
+    
+    plot_data <- sig.scores_tcga_published.notch %>% 
+      dplyr::bind_rows(sig.scores_tcga_opt.notch) %>% 
+      dplyr::filter(id_geneset_name == !!i) %>% 
+      dplyr::distinct() %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature)
+    
+    coord_text <- sig.scores_tcga_published.notch %>% 
+      dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+      dplyr::bind_rows(sig.scores_tcga_opt.notch) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) %>% 
+      dplyr::distinct()
+    
+    coord_text_x <- range(coord_text[,2], na.rm = TRUE)
+    coord_text_y <- range(coord_text[,3], na.rm = TRUE)
+  
+    p <- plot_data %>% 
+      ggplot(aes_string(y = "quant_signature",
+                        x = j )) +
+        geom_hex() +
+      scale_fill_viridis() +
+      labs(y = "Signature Score",
+           x = toupper(str_remove(j, "\\_.+$"))) +
+      coord_cartesian(ylim = c(coord_text_y[1], coord_text_y[2]),
+                      xlim = c(coord_text_x[1], coord_text_x[2])) +
+      theme(legend.title = element_text(angle = 90, vjust= 1)) +
+      guides(fill = guide_colorbar(title.position = "left")) +
+      geom_text(x=coord_text_x[1]*0.9, 
+                y=coord_text_y[1]*0.9, 
+                label=paste("R =", signif(measure$cor, digits = 2)),
+                vjust = 0, hjust = 0,
+                color = "black",
+                fontface = "plain")
+      
+    plot_list[[j]] <- p
+  }
+  
+  plot_purity_list[[i]][["TCGA"]] <- plot_list
+}
+
+DT::datatable(clin.cor_tcga %>% 
+  dplyr::filter(var2 %in% c("estimatescore_24113773",
+                            "stromalscore_24113773",
+                            "immunescore_24113773")) %>% 
+    dplyr::select(-statistic, -var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+```
+
+### METABRIC
+
+```{r 08-purity_plots_METABRIC}
+# Tumor Purity METABRIC:
+
+for(i in focus_signatures){
+  
+  plot_list <- list()
+  
+  for(j in c("estimatescore_24113773",
+             "stromalscore_24113773",
+             "immunescore_24113773")){
+    
+    measure <- clin.cor_metabric %>% 
+      dplyr::filter(id_geneset_name == !!i,
+                    var2 == !!j) %>% 
+      dplyr::select(id_geneset_name, var2, cor, p.adj)
+    
+    plot_data <- sig.scores_metabric_published.notch %>% 
+      dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+      dplyr::filter(id_geneset_name == !!i) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) 
+    
+    coord_text <- sig.scores_metabric_published.notch %>% 
+      dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+      dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) %>% 
+      dplyr::distinct()
+    
+    coord_text_x <- range(coord_text[,2], na.rm = TRUE)
+    coord_text_y <- range(coord_text[,3], na.rm = TRUE)
+  
+    p <- plot_data %>% 
+      ggplot(aes_string(y = "quant_signature",
+                        x = j )) +
+        geom_hex() +
+      scale_fill_viridis() +
+      labs(y = "Signature Score",
+           x = toupper(str_remove(j, "\\_.+$"))) +
+      coord_cartesian(ylim = c(coord_text_y[1], coord_text_y[2]),
+                      xlim = c(coord_text_x[1], coord_text_x[2])) +
+      theme(legend.title = element_text(angle = 90, vjust= 1)) +
+      guides(fill = guide_colorbar(title.position = "left")) +
+      geom_text(x=coord_text_x[1]*0.9, 
+                y=coord_text_y[1]*0.9, 
+                label=paste("R =", signif(measure$cor, digits = 2)),
+                vjust = 0, hjust = 0,
+                color = "black",
+                fontface = "plain")
+      
+    plot_list[[j]] <- p
+  }
+    
+  plot_purity_list[[i]][["METABRIC"]] <- plot_list
+}
+
+
+DT::datatable(clin.cor_metabric %>% 
+  dplyr::filter(var2 %in% c("estimatescore_24113773",
+                            "stromalscore_24113773",
+                            "immunescore_24113773")) %>% 
+    dplyr::select(-statistic, -var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+```
+
+### Oslo2
+
+```{r 09-purity_plots_Oslo2}
+
+for(i in focus_signatures){
+  
+  plot_list <- list()
+
+  for(j in c("estimatescore_24113773",
+             "stromalscore_24113773",
+             "immunescore_24113773")){
+    
+    measure <- clin.cor_oslo2 %>% 
+      dplyr::filter(id_geneset_name == !!i,
+                    var2 == !!j) %>% 
+      dplyr::select(id_geneset_name, var2, cor, p.adj)
+    
+    plot_data <- sig.scores_oslo2_published.notch %>% 
+      dplyr::bind_rows(sig.scores_oslo2_opt.notch) %>% 
+      dplyr::filter(id_geneset_name == !!i) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) 
+    
+    coord_text <- sig.scores_oslo2_published.notch %>% 
+      dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+      dplyr::bind_rows(sig.scores_oslo2_opt.notch) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) %>% 
+      dplyr::distinct()
+    
+    coord_text_x <- range(coord_text[,2], na.rm = TRUE)
+    coord_text_y <- range(coord_text[,3], na.rm = TRUE)
+  
+    p <- plot_data %>% 
+      ggplot(aes_string(y = "quant_signature",
+                        x = j )) +
+        geom_hex() +
+      scale_fill_viridis() +
+      labs(y = "Signature Score",
+           x = toupper(str_remove(j, "\\_.+$"))) +
+      coord_cartesian(ylim = c(coord_text_y[1], coord_text_y[2]),
+                      xlim = c(coord_text_x[1], coord_text_x[2])) +
+      theme(legend.title = element_text(angle = 90, vjust= 1)) +
+      guides(fill = guide_colorbar(title.position = "left")) +
+      geom_text(x=coord_text_x[1]*0.9, 
+                y=coord_text_y[1]*0.9, 
+                label=paste("R =", signif(measure$cor, digits = 2)),
+                vjust = 0, hjust = 0,
+                color = "black",
+                fontface = "plain")
+      
+    plot_list[[j]] <- p
+  }
+    
+  plot_purity_list[[i]][["Oslo2"]] <- plot_list
+}
+
+# Tumor Purity Oslo2
+  
+DT::datatable(clin.cor_oslo2 %>% 
+  dplyr::filter(var2 %in% c("estimatescore_24113773",
+                            "stromalscore_24113773",
+                            "immunescore_24113773")) %>% 
+    dplyr::select(-statistic, -var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+```
+
+### Plots
+
+```{r 10-Signatures_Purity, fig.height=12, fig.width=12}
+
+for(i in names(plot_purity_list)){
+
+  plot_list <- cowplot::plot_grid(plotlist = unlist(plot_purity_list[[i]], recursive = FALSE),
+                                  ncol = 3,
+                                  byrow = FALSE)
+  
+  # now add the title
+  title_tcga <- ggdraw() + 
+    draw_label(
+      paste("TCGA"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  title_METABRIC <- ggdraw() + 
+    draw_label(
+      paste("METABRIC"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  title_Oslo2 <- ggdraw() + 
+    draw_label(
+      paste("Oslo2"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  datasets_title <- plot_grid(
+    title_tcga, title_METABRIC, title_Oslo2,
+    ncol = 3)
+  
+  # now add the title
+  title <- ggdraw() + 
+    draw_label(
+      paste("Signature: ", i),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  print(plot_grid(
+    title,
+    plot_grid(
+      datasets_title, plot_list,
+      ncol = 1,
+      # rel_heights values control vertical title margins
+      rel_heights = c(0.1, 1)
+    ),
+    ncol = 1,
+    rel_heights = c(0.1,1)
+  ))
+
+}
+
+
+```
+
+## Other measures for Immune cell Infiltration
+
+Assumption: Significant correlations (p.adj < 0.05 & correlation coefficient > 0.5
+
+### TCGA
+
+```{r 11-plot_correlations_other_TCGA}
+# Tumor immune cell infiltration
+
+plot_list_others <- list()
+
+for(i in focus_signatures){
+  
+  plot_list <- list()
+  
+  for(j in c("sample_percent_normal_cells",
+                            "sample_percent_stromal_cells",
+                            "sample_percent_tumor_cells",
+                            "sample_percent_lymphocyte", 
+                            "sample_percent_monocyte", 
+                            "sample_percent_neutrophil",
+                            "imm_infiltration_timer_b_cell_27549193",
+                            "imm_infiltration_timer_cd4_pos_t_cell_27549193",
+                            "imm_infiltration_timer_cd8_pos_t_cell_27549193",
+                            "imm_infiltration_timer_dendritic_27549193",
+                            "imm_infiltration_timer_macrophage_27549193",
+                            "imm_infiltration_timer_neutrophil_27549193",
+                            "imm_tumor_purity_by_method_absolute_26634437")){
+    
+  
+    measure <- clin.cor_tcga %>% 
+      dplyr::filter(id_geneset_name == !!i,
+                    var2 == !!j) %>% 
+      dplyr::select(id_geneset_name, var2, cor, p.adj)
+    
+    plot_data <- sig.scores_tcga_published.notch %>% 
+      dplyr::bind_rows(sig.scores_tcga_opt.notch) %>% 
+      dplyr::filter(id_geneset_name == !!i) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) 
+    
+    coord_text <- sig.scores_tcga_published.notch %>% 
+      dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+      dplyr::bind_rows(sig.scores_tcga_opt.notch) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) %>% 
+      dplyr::distinct()
+    
+    coord_text_x <- range(coord_text[,2], na.rm = TRUE)
+    coord_text_y <- range(coord_text[,3], na.rm = TRUE)
+  
+    p <- plot_data %>% 
+      ggplot(aes_string(y = "quant_signature",
+                        x = j )) +
+        geom_hex() +
+      scale_fill_viridis() +
+      labs(y = "Signature Score",
+           x = str_replace_all(str_remove_all(j, "\\_[0-9]+$|^imm\\_|^sample\\_"),"_"," ")) +
+      coord_cartesian(ylim = c(coord_text_y[1], coord_text_y[2]),
+                      xlim = c(coord_text_x[1], coord_text_x[2])) +
+      theme(legend.title = element_text(angle = 90, vjust= 1)) +
+      guides(fill = guide_colorbar(title.position = "left")) +
+      geom_text(x=coord_text_x[1]*0.9, 
+                y=coord_text_y[1]*0.9, 
+                label=paste("R =", signif(measure$cor, digits = 2)),
+                vjust = 0, hjust = 0,
+                color = "black",
+                fontface = "plain")
+      
+    plot_list[[j]] <- p
+  
+  }
+  
+  plot_list_others[[i]] <- cowplot::plot_grid(plotlist = plot_list,
+                                  ncol = 3)
+}
+  
+DT::datatable(clin.cor_tcga %>% 
+  dplyr::filter(var2 %in% c("sample_percent_normal_cells",
+                            "sample_percent_stromal_cells",
+                            "sample_percent_tumor_cells",
+                            "sample_percent_lymphocyte", 
+                            "sample_percent_monocyte", 
+                            "sample_percent_neutrophil",
+                            "imm_infiltration_timer_b_cell_27549193",
+                            "imm_infiltration_timer_cd4_pos_t_cell_27549193",
+                            "imm_infiltration_timer_cd8_pos_t_cell_27549193",
+                            "imm_infiltration_timer_dendritic_27549193",
+                            "imm_infiltration_timer_macrophage_27549193",
+                            "imm_infiltration_timer_neutrophil_27549193",
+                            "imm_tumor_purity_by_method_absolute_26634437")) %>% 
+    dplyr::select(-statistic, -var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+```
+
+
+```{r 12-correlation_others_TCGA, fig.height=15, fig.width=12}
+
+for(i in names(plot_list_others)){
+  
+  # now add the title
+  title <- ggdraw() + 
+    draw_label(
+      paste(i, " - TCGA"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  print(plot_grid(
+    title, plot_list_others[[i]],
+    ncol = 1,
+    # rel_heights values control vertical title margins
+    rel_heights = c(0.1, 1)
+  ))
+}
+
+
+```
+
+### METABRIC
+
+```{r 13-correlation_others_METABRIC}
+# Tumor immune cell infiltration
+
+plot_list_others <- list()
+
+for(i in focus_signatures){
+  
+  plot_list <- list()
+  
+  for(j in c("purity_27161491")){
+    
+  
+    measure <- clin.cor_metabric %>% 
+      dplyr::filter(id_geneset_name == !!i,
+                    var2 == !!j) %>% 
+      dplyr::select(id_geneset_name, var2, cor, p.adj)
+    
+    plot_data <- sig.scores_metabric_published.notch %>% 
+      dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+      dplyr::filter(id_geneset_name == !!i) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) 
+    
+    coord_text <- sig.scores_metabric_published.notch %>% 
+      dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+      dplyr::bind_rows(sig.scores_metabric_opt.notch) %>% 
+      dplyr::select(id_geneset_name, !!j, quant_signature) %>% 
+      dplyr::distinct()
+    
+    coord_text_x <- range(coord_text[,2], na.rm = TRUE)
+    coord_text_y <- range(coord_text[,3], na.rm = TRUE)
+  
+    p <- plot_data %>% 
+      ggplot(aes_string(y = "quant_signature",
+                        x = j )) +
+        geom_hex() +
+      scale_fill_viridis() +
+      labs(y = "Signature Score",
+           x = str_replace_all(str_remove_all(j, "\\_[0-9]+$|^imm\\_|^sample\\_"),"_"," ")) +
+      coord_cartesian(ylim = c(coord_text_y[1], coord_text_y[2]),
+                      xlim = c(coord_text_x[1], coord_text_x[2])) +
+      theme(legend.title = element_text(angle = 90, vjust= 1)) +
+      guides(fill = guide_colorbar(title.position = "left")) +
+      geom_text(x=coord_text_x[1]*0.9, 
+                y=coord_text_y[1]*0.9, 
+                label=paste("R =", signif(measure$cor, digits = 2)),
+                vjust = 0, hjust = 0,
+                color = "black",
+                fontface = "plain")
+      
+    plot_list[[j]] <- p
+  
+  }
+  
+  plot_list_others[[i]] <- cowplot::plot_grid(plotlist = plot_list,
+                                  ncol = 1)
+}
+  
+DT::datatable(clin.cor_metabric %>% 
+  dplyr::filter(var2 %in% c("purity_27161491")) %>% 
+    dplyr::select(-statistic, -var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+```
+
+
+```{r 14-correlations_other_METABRIC, fig.height=2.5, fig.width=3}
+
+for(i in names(plot_list_others)){
+  
+  # now add the title
+  title <- ggdraw() + 
+    draw_label(
+      paste(i, " - METABRIC"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0,
+      size = 6
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  print(plot_grid(
+    title, plot_list_others[[i]],
+    ncol = 1,
+    # rel_heights values control vertical title margins
+    rel_heights = c(0.1, 1)
+  ))
+}
+
+
+```
+
+# Visualizations for publication in high resolution
+
+```{r 15-TCGA_Oslo2, fig.height=6, fig.width=14, dev="svg"}
+
+interest <- c("Notch 20-Gene Signature", "HALLMARK_NOTCH_SIGNALING", "Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up", "VILIMAS_NOTCH1_TARGETS_UP")
+
+plot_oslo <- list()
+plot_tcga <- list()
+
+for(i in interest){
+
+  plot_present <- plot_purity_list[[i]]
+  plot_present <- plot_present[names(plot_present) %in% c("TCGA", "Oslo2")]
+  
+  for(j in c("TCGA", "Oslo2")){
+    plot_present[[j]] <- plot_present[[j]][grepl("stromal|immune", names(plot_present[[j]]))]
+  }
+  
+  plot_oslo[[i]] <- plot_present[["Oslo2"]]
+  plot_tcga[[i]] <- plot_present[["TCGA"]]
+
+}
+
+## TCGA Plots:
+
+  plot_list <- cowplot::plot_grid(plotlist = unlist(plot_tcga, recursive = FALSE),
+                                  ncol = 4,
+                                  byrow = FALSE)
+
+  
+    # now add the title
+  title_tcga <- ggdraw() + 
+    draw_label(
+      paste("TCGA"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )  
+    # 
+    # datasets_title <- plot_grid(
+    # title_tcga,
+    # ncol = 1)
+    
+  plot_title_list <- list()
+
+  for(i in names(plot_tcga)){
+      # now add the title
+    plot_title_list[[i]] <- ggdraw() + 
+      draw_label(
+        paste0("Signature:\n", i),
+        fontface = 'bold',
+        x = 0,
+        hjust = 0,
+        size = 10
+      ) +
+    theme(
+      # add margin on the left of the drawing canvas,
+      # so title is aligned with left edge of first plot
+      plot.margin = margin(0, 0, 0, 7)
+    )
+  
+  }
+
+  print(plot_grid(
+    title_tcga,
+    plot_grid(
+      cowplot::plot_grid(plotlist = plot_title_list,
+                   ncol = 4,
+                   byrow = FALSE), plot_list,
+      ncol = 1,
+      # rel_heights values control vertical title margins
+      rel_heights = c(0.1, 1)
+    ),
+    ncol = 1,
+    rel_heights = c(0.1,1)
+  ))
+  
+
+## Oslo Plots:
+
+  plot_list <- cowplot::plot_grid(plotlist = unlist(plot_oslo, recursive = FALSE),
+                                  ncol = 4,
+                                  byrow = FALSE)
+
+  
+    # now add the title
+  title_oslo <- ggdraw() + 
+    draw_label(
+      paste("Oslo2"),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )  
+    # 
+    # datasets_title <- plot_grid(
+    # title_tcga,
+    # ncol = 1)
+    
+  plot_title_list <- list()
+
+  for(i in names(plot_oslo)){
+      # now add the title
+    plot_title_list[[i]] <- ggdraw() + 
+      draw_label(
+        paste0("Signature:\n", i),
+        fontface = 'bold',
+        x = 0,
+        hjust = 0,
+        size = 10
+      ) +
+    theme(
+      # add margin on the left of the drawing canvas,
+      # so title is aligned with left edge of first plot
+      plot.margin = margin(0, 0, 0, 7)
+    )
+  
+  }
+
+  print(plot_grid(
+    title_oslo,
+    plot_grid(
+      cowplot::plot_grid(plotlist = plot_title_list,
+                   ncol = 4,
+                   byrow = FALSE), plot_list,
+      ncol = 1,
+      # rel_heights values control vertical title margins
+      rel_heights = c(0.1, 1)
+    ),
+    ncol = 1,
+    rel_heights = c(0.1,1)
+  ))
+
+
+```
+
+
+# Continue now in Notch Analysis Part 7b
+
+```{r}
+save.image(file = "../RData/Part7a.RData")
+```
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

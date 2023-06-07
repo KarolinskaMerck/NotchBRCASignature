@@ -1,0 +1,2342 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 6 - Evaluation of NOTCH signatures in the in vitro validation cohort"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part6.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  # 4 inch high, 6 inch wide
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part6/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+
+library(readxl)
+library(xlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(circlize)
+library(ggthemes)
+library(ComplexHeatmap)
+library(scales)
+
+library(DESeq2)
+library(edgeR)
+
+library(rmarkdown)
+library(DT)
+
+library(clusterProfiler)
+library(enrichplot)
+library(sva)
+library(vsn)
+library(PCAtools)
+library(uwot)
+
+library(msigdbr)
+library(org.Hs.eg.db)
+
+library(coin)
+library(rstatix)
+
+library(viridis)
+
+# Merck X-Omics Platform:
+
+library(ProfilerAPI2)
+# library(xopdata)
+# getsrc <- xopdata::get_src()
+
+# Citations:
+
+knitr::write_bib(file = '../src/part6.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+all_subtype_colors <- c(subtype_colors, c("lumb" = as.character(merck_colors[4])))
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+batch_colors <- merck_colors[c(5,9)]
+names(batch_colors) <- c("Validation", "Training")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+</div>
+  
+**Methods**
+
+1. Gene Set Enrichment of the published and the optimized Notch signatures using the validation data set
+2. Calculation of gene signature scores, therefore, both validation and training data set are combined and batch corrected
+3. Correlation of signatures to public data sets to tumor purity / immune infiltration
+
+**Conclusion**  
+
+<div class = "box">
+
+GSEA of the validation cohort in 28 of 56 published signatures as well as in the experimentally derived 20-gene Signature resulted in a significant enrichment. The 20-gene Signature can significantly separate basal-like cell lines from the other subtypes, as well as 38 of the published signatures. 
+Only the 20-gene signature significantly, with a large effect size, can separate treatment between Notch On and Notch Off in both the 8h and 72h time point.
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].  
+
+**Expression Profiling**  
+The RNASeq data had been analzed using `DESeq2` [@R-DESeq2].  
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], and `ggrepel` [@R-ggrepel].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT]. Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].     
+
+**Gene set enrichment analysis (GSEA)**  
+GSEA was performed by the `fgsea` implementation in `clusterProfiler` [@clusterProfiler2012; @R-clusterProfiler] and visualized by `enrichplot` [@R-enrichplot].  
+
+**Batch Correction**  
+To analyze a potential batch effects, the RNASeq data sets are analyzed using `PCAtools` [@R-PCAtools] and `uwot` [@R-uwot], subsequently the batch effect are adjusted for by using an empirical Bayes framework (ComBat), implemented in `sva` [@R-sva].  
+
+**Statistics**   
+Statistics were calculated using the `rstatix` package [@R-rstatix].  
+
+**Gene set and genomic annotations**  
+In addition to the gene signatures from publications and adaption of gene symbols from mouse to human via `org.Hs.eg.db` and `ClusterProfiler` [@R-AnnotationDbi; @R-org.Hs.eg.db; @clusterProfiler2012; @R-clusterProfiler], all gene signatures with NOTCH in the name were loaded from the MSIGdb via `msigdbr` [@R-msigdbr].  
+ 
+
+```{r 02-load-data}
+
+# Internal Access to Data Lake
+# Data sets as described in the manuscript
+
+api = ProfilerAPI2::profiler_api(profile = "myprofile")   ## needed for Rmarkdown connection to ProfilerAPI2
+con <- api$conn
+
+### Load all data needed, make the variables more "readable" for comparison:
+
+base::load("../RData/Part1c.RData")
+#Training_ddsSE_72h = ddsSE_72h
+Training_res_DAPT_72h = res_DAPT_72h
+Training_res_Jagged1_72h = res_Jagged1_72h
+Training_res_Jagged1_DAPT_72h = res_Jagged1_DAPT_72h
+rm(ddsSE_72h, res_DAPT_72h, res_Jagged1_72h, res_Jagged1_DAPT_72h)
+
+base::load("../RData/Part1b.RData")
+#Training_ddsSE_8h = ddsSE_8h
+Training_res_DAPT_8h = res_DAPT_8h
+Training_res_Jagged1_8h = res_Jagged1_8h
+Training_res_Jagged1_DAPT_8h = res_Jagged1_DAPT_8h
+rm(ddsSE_8h, res_DAPT_8h, res_Jagged1_8h, res_Jagged1_DAPT_8h)
+
+base::load("../RData/Part1a.RData")
+Training_TPM = qnt.mat_tpm_agg_log2
+#Training_ddsSE_preparation = ddsSE_preparation
+#Training_ddsSE = ddsSE
+Training_res_DAPT = res_DAPT
+Training_res_Jagged1 = res_Jagged1
+Training_res_Jagged1_DAPT = res_Jagged1_DAPT
+rm(ddsSE, res_DAPT, res_Jagged1, res_Jagged1_DAPT, meta.all_summary, ddsSE_preparation, notch_CCLE_mutations_csv_21Q1_long, qnt.mat_tpm_agg_log2)
+
+base::load("../RData/Part5.RData")
+
+```
+
+# Validation of Signatures
+
+We will validate all published and MSIGDB signatures and all signatures from the optimization approach in the validation cohort experiments by gene set enrichment analysis (GSEA).  
+
+```{r}
+
+### --- Gene set enrichment using fgsea:
+
+validation_all_Jagged1_DAPT <- validation_res_Jagged1_DAPT %>%
+  as.data.frame() %>%
+  rownames_to_column("symbol") %>%
+  dplyr::mutate(stat = -log10(P.Value)*logFC) %>% 
+  dplyr::arrange(desc(stat)) %>%
+  dplyr::select(-AveExpr, -t, -P.Value, -adj.P.Val, -B, -ensembl, -gene_chrom, -genename, -entrez, -logFC)
+
+validation_all_Jagged1_DAPT_list <- validation_all_Jagged1_DAPT$stat
+names(validation_all_Jagged1_DAPT_list) <- validation_all_Jagged1_DAPT$symbol
+
+validation_all_Jagged1_DAPT_8h <- validation_res_Jagged1_DAPT_8h %>%
+  as.data.frame() %>%
+  rownames_to_column("symbol") %>%
+  dplyr::mutate(stat = -log10(P.Value)*logFC) %>% 
+  dplyr::arrange(desc(stat)) %>%
+  dplyr::select(-AveExpr, -t, -P.Value, -adj.P.Val, -B, -ensembl, -gene_chrom, -genename, -entrez, -logFC)
+
+validation_all_Jagged1_DAPT_8h_list <- validation_all_Jagged1_DAPT_8h$stat
+names(validation_all_Jagged1_DAPT_8h_list) <- validation_all_Jagged1_DAPT_8h$symbol
+
+validation_all_Jagged1_DAPT_72h <- validation_res_Jagged1_DAPT_72h %>%
+  as.data.frame() %>%
+  rownames_to_column("symbol") %>%
+  dplyr::mutate(stat = -log10(P.Value)*logFC) %>% 
+  dplyr::arrange(desc(stat)) %>%
+  dplyr::select(-AveExpr, -t, -P.Value, -adj.P.Val, -B, -ensembl, -gene_chrom, -genename, -entrez, -logFC)
+
+validation_all_Jagged1_DAPT_72h_list <- validation_all_Jagged1_DAPT_72h$stat
+names(validation_all_Jagged1_DAPT_72h_list) <- validation_all_Jagged1_DAPT_72h$symbol
+
+rm(validation_res_Jagged1_DAPT_72h,
+   validation_res_Jagged1_DAPT_8h,
+   validation_res_Jagged1_DAPT)
+```
+
+## GSEA of signatures with a good coherence score in TCGA
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for both time points
+
+```{r, dev='png'}
+
+base::load("../RData/Part2.RData")
+rm(cpm_mat_full,
+   cs_q,
+   cs_df_metabric,
+   cs_df_Oslo2,
+   cs_df_TCGA,
+   metabric_gene_expession_data_scaled_wide_full,
+   Oslo2_gene_expession_data_wide_full,
+   tpm_mat_full)
+
+### --- Do GSEA
+
+combined_gs.list <- c(gene_set_list_opt_notch)
+
+# select gene sets with CS > 0.2
+
+combined_gs.list <- combined_gs.list[cs_all_optimized$cs_mean_TCGA>0.2 & !is.na(cs_all_optimized$cs_mean_TCGA)]
+
+# interesection of gene sets with genes present in validation DEG
+
+### Jagged1 vs DAPT 8h/72h
+
+gs.list.Validation_all = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_list)))
+
+gs.list.Validation_all <- tibble::tibble(id_geneset_name = names(gs.list.Validation_all),
+                                     genes = unname(gs.list.Validation_all),
+                                     size = purrr::map_int(gs.list.Validation_all, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_all_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_all$id_geneset_name)){
+  gs.list.Validation_all_list <- bind_rows(gs.list.Validation_all_list,
+                                            data.frame(gs_name = gs.list.Validation_all$id_geneset_name[i],
+                                                       gene_symbol = gs.list.Validation_all$genes[[i]]))
+  
+}
+
+### Jagged1 vs DAPT 8h
+
+gs.list.Validation_8h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_8h_list)))
+
+gs.list.Validation_8h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_8h),
+                                     genes = unname(gs.list.Validation_8h),
+                                     size = purrr::map_int(gs.list.Validation_8h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_8h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_8h$id_geneset_name)){
+  gs.list.Validation_8h_list <- bind_rows(gs.list.Validation_8h_list,
+                                      data.frame(gs_name = gs.list.Validation_8h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_8h$genes[[i]]))
+  
+}
+
+### Jagged1 vs 72h
+
+gs.list.Validation_72h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_72h_list)))
+
+gs.list.Validation_72h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_72h),
+                                     genes = unname(gs.list.Validation_72h),
+                                     size = purrr::map_int(gs.list.Validation_72h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_72h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_72h$id_geneset_name)){
+  gs.list.Validation_72h_list <- bind_rows(gs.list.Validation_72h_list,
+                                      data.frame(gs_name = gs.list.Validation_72h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_72h$genes[[i]]))
+  
+}
+
+### --- do the GSEA
+
+gsea_Jagged1_DAPT <- GSEA(validation_all_Jagged1_DAPT_list, TERM2GENE = gs.list.Validation_all_list, 
+                          pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT@result$p.adjust)[nrow(gsea_Jagged1_DAPT@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+
+sign_gsea_Jagged1_DAPT <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+```{r, fig.width=6, fig.height=4}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h+72h Treatment of Breast Cancer Validation Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 8h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_8h <- GSEA(sort(validation_all_Jagged1_DAPT_8h_list, decreasing = TRUE), 
+                             TERM2GENE = gs.list.Validation_8h_list, 
+                             pvalueCutoff = 1,
+                             minGSSize = 3,
+                             maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT_8h@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_8h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_8h, 
+#           geneSetID = gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])[order(gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_8h <- gsea_Jagged1_DAPT_8h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+
+```{r, fig.width=6, fig.height=4}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_8h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_8h, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 72h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_72h <- GSEA(sort(validation_all_Jagged1_DAPT_72h_list, decreasing = TRUE), 
+                              TERM2GENE = gs.list.Validation_72h_list, 
+                              pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_72h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_72h, 
+#           geneSetID = gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])[order(gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_72h <- gsea_Jagged1_DAPT_72h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+Validation_gsea_summary <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::select(ID, NES, p.adjust) %>% 
+  dplyr::mutate(gsea = "Jagged1_DAPT") %>% 
+  bind_rows(gsea_Jagged1_DAPT_8h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_8h")) %>% 
+  bind_rows(gsea_Jagged1_DAPT_72h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_72h")) %>% 
+  as_tibble()
+
+# separate published and optimized signatures:
+
+Validation_gsea.opt_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(grepl("Notch 20-Gene Signature", ID))
+
+Validation_gsea.published_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(!grepl("Notch 20-Gene Signature", ID))
+
+```
+
+
+```{r, fig.width=6, fig.height=4}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_72h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_72h, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n72h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### Figure: All three comparisons for the three signatures
+
+```{r fig.height=2.5, fig.width=7.2}
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             fill = p.adjust)) +
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap(~ gsea) +
+  scale_fill_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90)
+  
+```
+
+
+
+## GSEA of all 15 signatures
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for both time points
+
+```{r, dev='png'}
+
+#base::load("../RData/04-Notch-Part2-Signatures.RData")
+# rm(cpm_mat_full,
+#    cs_q,
+#    cs_df_metabric,
+#    cs_df_Oslo2,
+#    cs_df_TCGA,
+#    cs_all_optimized,
+#    metabric_gene_expession_data_scaled_wide_full,
+#    Oslo2_gene_expession_data_wide_full,
+#    tpm_mat_full)
+
+### --- Do GSEA
+
+combined_gs.list <- c(gene_set_list_opt_notch)
+
+# remove the list with no length
+
+combined_gs.list <- combined_gs.list[!unlist(lapply(combined_gs.list, function(x) all(is.na(x))))]
+
+# interesection of gene sets with genes present in validation DEG
+
+### Jagged1 vs DAPT 8h/72h
+
+gs.list.Validation_all = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_list)))
+
+gs.list.Validation_all <- tibble::tibble(id_geneset_name = names(gs.list.Validation_all),
+                                     genes = unname(gs.list.Validation_all),
+                                     size = purrr::map_int(gs.list.Validation_all, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_all_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_all$id_geneset_name)){
+  gs.list.Validation_all_list <- bind_rows(gs.list.Validation_all_list,
+                                            data.frame(gs_name = gs.list.Validation_all$id_geneset_name[i],
+                                                       gene_symbol = gs.list.Validation_all$genes[[i]]))
+  
+}
+
+### Jagged1 vs DAPT 8h
+
+gs.list.Validation_8h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_8h_list)))
+
+gs.list.Validation_8h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_8h),
+                                     genes = unname(gs.list.Validation_8h),
+                                     size = purrr::map_int(gs.list.Validation_8h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_8h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_8h$id_geneset_name)){
+  gs.list.Validation_8h_list <- bind_rows(gs.list.Validation_8h_list,
+                                      data.frame(gs_name = gs.list.Validation_8h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_8h$genes[[i]]))
+  
+}
+
+### Jagged1 vs 72h
+
+gs.list.Validation_72h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_72h_list)))
+
+gs.list.Validation_72h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_72h),
+                                     genes = unname(gs.list.Validation_72h),
+                                     size = purrr::map_int(gs.list.Validation_72h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_72h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_72h$id_geneset_name)){
+  gs.list.Validation_72h_list <- bind_rows(gs.list.Validation_72h_list,
+                                      data.frame(gs_name = gs.list.Validation_72h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_72h$genes[[i]]))
+  
+}
+
+### --- do the GSEA
+
+gsea_Jagged1_DAPT <- GSEA(validation_all_Jagged1_DAPT_list, TERM2GENE = gs.list.Validation_all_list, 
+                          pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT@result$p.adjust)[nrow(gsea_Jagged1_DAPT@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+
+sign_gsea_Jagged1_DAPT <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h+72h Treatment of Breast Cancer Validation Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 8h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_8h <- GSEA(sort(validation_all_Jagged1_DAPT_8h_list, decreasing = TRUE), 
+                             TERM2GENE = gs.list.Validation_8h_list, 
+                             pvalueCutoff = 1,
+                             minGSSize = 3,
+                             maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT_8h@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_8h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_8h, 
+#           geneSetID = gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])[order(gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_8h <- gsea_Jagged1_DAPT_8h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_8h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_8h, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 72h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_72h <- GSEA(sort(validation_all_Jagged1_DAPT_72h_list, decreasing = TRUE), 
+                              TERM2GENE = gs.list.Validation_72h_list, 
+                              pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_72h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_72h, 
+#           geneSetID = gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])[order(gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_72h <- gsea_Jagged1_DAPT_72h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+Validation_gsea_summary <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::select(ID, NES, p.adjust) %>% 
+  dplyr::mutate(gsea = "Jagged1_DAPT") %>% 
+  bind_rows(gsea_Jagged1_DAPT_8h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_8h")) %>% 
+  bind_rows(gsea_Jagged1_DAPT_72h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_72h")) %>% 
+  as_tibble()
+
+# separate published and optimized signatures:
+
+Validation_gsea.opt_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(grepl("Notch 20-Gene Signature", ID))
+
+Validation_gsea.published_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(!grepl("Notch 20-Gene Signature", ID))
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_72h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_72h, 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n72h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+
+### Figure: All three comparisons for the three signatures
+
+```{r fig.height=2.5, fig.width=10}
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             fill = p.adjust)) +
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap(~ gsea) +
+  scale_fill_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90)
+
+```
+
+## GSEA: Final Signature + MSIGDB Signatures
+
+```{r}
+
+base::load("../RData/Part3.RData")
+
+# signatures to show:
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+```
+
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for both time points
+
+```{r, dev='png'}
+
+### --- Do GSEA
+
+combined_gs.list <- c(gs.list.opt_notch, gs.list.published_notch)
+
+# interesection of gene sets with genes present in validation DEG
+
+### Jagged1 vs DAPT 8h/72h
+
+gs.list.Validation_all = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_list)))
+
+gs.list.Validation_all <- tibble::tibble(id_geneset_name = names(gs.list.Validation_all),
+                                     genes = unname(gs.list.Validation_all),
+                                     size = purrr::map_int(gs.list.Validation_all, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_all_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_all$id_geneset_name)){
+  gs.list.Validation_all_list <- bind_rows(gs.list.Validation_all_list,
+                                            data.frame(gs_name = gs.list.Validation_all$id_geneset_name[i],
+                                                       gene_symbol = gs.list.Validation_all$genes[[i]]))
+  
+}
+
+### Jagged1 vs DAPT 8h
+
+gs.list.Validation_8h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_8h_list)))
+
+gs.list.Validation_8h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_8h),
+                                     genes = unname(gs.list.Validation_8h),
+                                     size = purrr::map_int(gs.list.Validation_8h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_8h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_8h$id_geneset_name)){
+  gs.list.Validation_8h_list <- bind_rows(gs.list.Validation_8h_list,
+                                      data.frame(gs_name = gs.list.Validation_8h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_8h$genes[[i]]))
+  
+}
+
+### Jagged1 vs 72h
+
+gs.list.Validation_72h = purrr::map(combined_gs.list, ~intersect(.x, names(validation_all_Jagged1_DAPT_72h_list)))
+
+gs.list.Validation_72h <- tibble::tibble(id_geneset_name = names(gs.list.Validation_72h),
+                                     genes = unname(gs.list.Validation_72h),
+                                     size = purrr::map_int(gs.list.Validation_72h, length),
+                                     size.orig = purrr::map_int(combined_gs.list, length))
+
+gs.list.Validation_72h_list <- data.frame(gs_name = character(),
+                                           gene_symbol = character())
+
+for(i in 1:length(gs.list.Validation_72h$id_geneset_name)){
+  gs.list.Validation_72h_list <- bind_rows(gs.list.Validation_72h_list,
+                                      data.frame(gs_name = gs.list.Validation_72h$id_geneset_name[i],
+                                                 gene_symbol = gs.list.Validation_72h$genes[[i]]))
+  
+}
+
+### --- do the GSEA
+
+gsea_Jagged1_DAPT <- GSEA(validation_all_Jagged1_DAPT_list, TERM2GENE = gs.list.Validation_all_list, 
+                          pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT@result$p.adjust)[nrow(gsea_Jagged1_DAPT@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+                                 
+# gseaplot2(gsea_Jagged1_DAPT, 
+#           geneSetID = gsea_Jagged1_DAPT@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT@result)-1):nrow(gsea_Jagged1_DAPT@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT@result)-1):nrow(gsea_Jagged1_DAPT@result))])[order(gsea_Jagged1_DAPT@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT@result)-1):nrow(gsea_Jagged1_DAPT@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT %>% 
+                  dplyr::filter(ID %in% !!focus_signatures), 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h+72h Treatment of Breast Cancer Validation Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 8h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_8h <- GSEA(sort(validation_all_Jagged1_DAPT_8h_list, decreasing = TRUE), 
+                             TERM2GENE = gs.list.Validation_8h_list, 
+                             pvalueCutoff = 1,
+                             minGSSize = 3,
+                             maxGSSize = 100)
+
+DT::datatable(gsea_Jagged1_DAPT_8h@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_8h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_8h, 
+#           geneSetID = gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_8h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])[order(gsea_Jagged1_DAPT_8h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_8h@result)-1):nrow(gsea_Jagged1_DAPT_8h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_8h <- gsea_Jagged1_DAPT_8h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_8h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_8h %>% 
+                  dplyr::filter(ID %in% !!focus_signatures), 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n8h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+### GSEA: Validation cohort, comparison Jagged1-DAPT for the time point: 72h
+
+```{r, dev='png'}
+
+gsea_Jagged1_DAPT_72h <- GSEA(sort(validation_all_Jagged1_DAPT_72h_list, decreasing = TRUE), 
+                              TERM2GENE = gs.list.Validation_72h_list, 
+                              pvalueCutoff = 1,
+                          minGSSize = 3,
+                          maxGSSize = 100)
+
+
+DT::datatable(gsea_Jagged1_DAPT@result %>%
+                dplyr::select(-Description, -core_enrichment) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+merck_colors_gsea <- colorRamp2(c(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[1], 
+                                  -log10(0.05),
+                                 -log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[nrow(gsea_Jagged1_DAPT_72h@result)]),
+                               c(merck_colors[1], "lightgrey", merck_colors[2]))
+#                                  
+# gseaplot2(gsea_Jagged1_DAPT_72h, 
+#           geneSetID = gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))], 
+#           pvalue_table = FALSE, 
+#           color = merck_colors_gsea(-log10(gsea_Jagged1_DAPT_72h@result$p.adjust)[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])[order(gsea_Jagged1_DAPT_72h@result$ID[c(1:3, (nrow(gsea_Jagged1_DAPT_72h@result)-1):nrow(gsea_Jagged1_DAPT_72h@result))])],
+#           ES_geom = "line") 
+
+sign_gsea_Jagged1_DAPT_72h <- gsea_Jagged1_DAPT_72h@result %>% 
+  dplyr::filter(p.adjust < 0.05)
+
+Validation_gsea_summary <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::select(ID, NES, p.adjust) %>% 
+  dplyr::mutate(gsea = "Jagged1_DAPT") %>% 
+  bind_rows(gsea_Jagged1_DAPT_8h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_8h")) %>% 
+  bind_rows(gsea_Jagged1_DAPT_72h@result %>% 
+                dplyr::select(ID, NES, p.adjust) %>% 
+                dplyr::mutate(gsea = "Jagged1_DAPT_72h")) %>% 
+  as_tibble()
+
+# separate published and optimized signatures:
+
+Validation_gsea.opt_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(grepl("Notch 20-Gene Signature", ID))
+
+Validation_gsea.published_notch_summary <- Validation_gsea_summary %>% 
+  dplyr::filter(!grepl("Notch 20-Gene Signature", ID))
+
+```
+
+
+```{r, fig.width=5, fig.height=5}
+
+if(nrow(as.data.frame(gsea_Jagged1_DAPT_72h)) != 0){
+  print(dotplot(gsea_Jagged1_DAPT_72h %>% 
+                  dplyr::filter(ID %in% !!focus_signatures), 
+                x = "NES", 
+                size = "setSize",
+                showCategory=20,
+                font.size = 8) + 
+          ggtitle("GSEA of Notch target genesets\n72h Treatment of Breast Cancer Cell lines\nNotch on vs. Notch off") +
+          scale_color_viridis(begin = 0, end = 1, option = "D",
+                              limits = c(0,0.05), oob=squish))
+}
+
+```
+
+
+### Figure: All three comparisons for the three signatures
+
+```{r fig.height=12, fig.width=10}
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>%
+                                      dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                                      dplyr::arrange(desc(NES)) %>% 
+                                      pull(ID),
+                            labels = Validation_gsea_summary %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              pull(ID) %>% 
+                              str_replace_all("\\_", " ")),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             fill = p.adjust)) +
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap( ~ gsea, ncol = 1) +
+  scale_fill_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90)
+
+```
+
+
+```{r fig.height=10, fig.width=5}
+
+Validation_gsea_summary %>% 
+  dplyr::filter(ID %in% !!focus_signatures) %>% 
+  dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>% 
+                              dplyr::filter(ID %in% !!focus_signatures) %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              dplyr::pull(ID),
+                            labels = Validation_gsea_summary %>% 
+                              dplyr::filter(ID %in% !!focus_signatures) %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              dplyr::pull(ID) %>% 
+                              str_replace_all("\\_", " ")),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             fill = p.adjust)) +
+  geom_bar(position="dodge", stat="identity") +
+  facet_wrap( ~ gsea, ncol = 1) +
+  scale_fill_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90)
+
+```
+
+
+# Calculation of signature scores in the breast cancer cell lines
+
+The calculation will be done on the TPM values. To understand whether there are batch effects between the TPM values of the two experimental conditions, both the training and the validation cohort are combined and batch corrected using Combat.  
+
+```{r, dev='png'}
+Validation_df <- validation_TPM %>% 
+  dplyr::left_join(validation_subtypes,
+                   by = "condition_cell_line") %>%
+  dplyr::select(sample_name, stripped_cell_line_name, gene_symbol, quant_tpm,
+                condition_treatment, condition_time, condition_subtype) %>% 
+  dplyr::mutate(condition_replicate = "1",
+                condition_batch = "Validation")
+
+Training_df <- Training_TPM %>% 
+  dplyr::select(sample_name, stripped_cell_line_name, gene_symbol = symbol, quant_tpm,
+                condition_treatment, condition_time, condition_subtype, condition_replicate) %>% 
+  dplyr::mutate(condition_batch = "Training")
+
+tpm_df <- bind_rows(Validation_df,
+                    Training_df)
+
+tpm_meta <- tpm_df %>% 
+  dplyr::select(-quant_tpm, -gene_symbol) %>% 
+  dplyr::distinct()
+
+tpm_df_wide <- tpm_df %>% 
+  dplyr::select(sample_name, quant_tpm, gene_symbol) %>% 
+  dplyr::filter(!is.na(gene_symbol)) %>% 
+  dplyr::distinct() %>% 
+  dplyr::group_by(sample_name, gene_symbol) %>% 
+  dplyr::summarise(quant_tpm = sum(quant_tpm)) %>% 
+  dplyr::ungroup() %>% 
+  tidyr::pivot_wider(names_from = sample_name,
+                     values_from = quant_tpm) %>% 
+  column_to_rownames("gene_symbol")
+
+tpm_meta <- tpm_meta[match(colnames(tpm_df_wide), tpm_meta$sample_name),]
+
+# exclude genes that have NAs
+
+tpm_df_wide_na <- tpm_df_wide %>% 
+  na.omit()
+
+tpm_mat_scaled <- tpm_df_wide_na %>%
+  t() %>% 
+  as.data.frame() %>% 
+  dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>% 
+  t() %>% 
+  na.omit()
+
+# PCA
+
+library(FactoMineR)
+
+PCA(tpm_mat_scaled, scale.unit = TRUE, ncp = 5, graph = TRUE)
+
+p <- pca(tpm_mat_scaled, 
+         metadata = (tpm_meta %>% 
+           column_to_rownames("sample_name")), 
+         removeVar = 0.1)
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Breast Cancer experimental batches",
+       lab = NA,
+       pointSize = 2,
+       colby = 'condition_batch',
+       #shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  ggrepel::geom_text_repel(aes(label = p$metadata$stripped_cell_line_name))
+
+```
+
+## Batch Correction
+
+```{r, dev='png'}
+### --- Batch Correction
+## remove genes with no counts and run ComBat on what's left
+
+batch_k <- rowSums(tpm_df_wide_na) > 5
+
+batch_tpm_k <- tpm_df_wide_na %>% 
+  as.data.frame() %>% 
+  dplyr::filter(batch_k)
+
+tpm_meta <- tpm_meta[match(colnames(batch_tpm_k), tpm_meta$sample_name),]
+
+batch_tpm <- sva::ComBat(as.matrix(batch_tpm_k),
+                         as.factor(tpm_meta$condition_batch))
+
+batch_tpm[batch_tpm < 0] <- 0
+
+## put the zero genes back in
+m <- matrix(rep(0, ncol(batch_tpm) * sum(!batch_k)),
+            ncol = ncol(batch_tpm), nrow = sum(!batch_k))
+
+rownames(m) <- rownames(tpm_df_wide_na)[!batch_k]
+batch_tpm <- rbind(batch_tpm,
+                   m)
+
+batch_tpm_scaled <- batch_tpm %>%
+  t() %>% 
+  as.data.frame() %>% 
+  dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>% 
+  t() %>% 
+  na.omit()
+
+p <- pca(batch_tpm_scaled, 
+         metadata = (tpm_meta %>% 
+           column_to_rownames("sample_name")), 
+         removeVar = 0.1)
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Breast Cancer experimental batches",
+       lab = NA,
+       pointSize = 2,
+       colby = 'condition_batch',
+       #shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  ggrepel::geom_text_repel(aes(label = p$metadata$stripped_cell_line_name))
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Breast Cancer experimental batches",
+       lab = NA,
+       pointSize = 2,
+       colby = 'condition_subtype',
+       #shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  ggrepel::geom_text_repel(aes(label = p$metadata$stripped_cell_line_name))
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Breast Cancer cell lines",
+       lab = NA,
+       pointSize = 2,
+       colby = 'stripped_cell_line_name',
+       #shape = "Treatment",
+       colkey = merck_colors_ext(1:40),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  ggrepel::geom_text_repel(aes(label = p$metadata$stripped_cell_line_name))
+### --- UMAP
+```
+
+<div class = "box">
+
+Batch correction was not needed, as no batch has been found in the TPM data set.  
+
+</div>
+
+## UMAP
+
+```{r, dev='png', fig.height=4, fig.width=5}
+z_umap <- umap(t(batch_tpm_scaled), pca = 10)
+
+tpm_meta_outlier_umap <- tpm_meta %>% 
+  column_to_rownames("sample_name")
+
+z_umap_df <- data.frame(umap1 = z_umap[,1],
+           umap2 = z_umap[,2],
+           tpm_meta_outlier_umap,
+           stringsAsFactors = FALSE)
+
+rownames(z_umap_df) <- rownames(tpm_meta_outlier_umap)
+
+ggscatter(z_umap_df,
+          x = "umap1",
+          y = "umap2",
+          color = "condition_subtype",
+          shape = "condition_time",
+          size = 3,
+          legend = "right",
+          palette = merck_colors,
+          title = "Dimensionality Reduction with UMAP") +
+  guides(col = guide_legend(nrow = 14)) +
+  geom_text_repel(data = z_umap_df %>% group_by(stripped_cell_line_name, condition_subtype) %>% 
+               summarise(umap1 = mean(umap1), 
+                         umap2 = mean(umap2)),
+             aes(x = umap1,
+                 y = umap2,
+                 label = stripped_cell_line_name,
+                 color = condition_subtype))
+
+
+ggscatter(z_umap_df,
+          x = "umap1",
+          y = "umap2",
+          color = "condition_batch",
+          shape = "condition_time",
+          size = 3,
+          legend = "right",
+          palette = merck_colors,
+          title = "Dimensionality Reduction with UMAP") +
+  guides(col = guide_legend(nrow = 14)) +
+  geom_text_repel(data = z_umap_df %>% group_by(stripped_cell_line_name, condition_batch) %>% 
+               summarise(umap1 = mean(umap1), 
+                         umap2 = mean(umap2)),
+             aes(x = umap1,
+                 y = umap2,
+                 label = stripped_cell_line_name,
+                 color = condition_batch))
+
+
+
+# prepare long data frame:
+
+batch_tpm_long <- batch_tpm %>% 
+  as.data.frame() %>% 
+  rownames_to_column("id_gene_symbol") %>% 
+  tidyr::pivot_longer(-1,
+                      names_to = "sample_name",
+                      values_to = "quant_tpm_tmm") %>% 
+  dplyr::mutate(quant_log2tpm = log2(quant_tpm_tmm+1)) %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled_tpm = as.numeric(scale(quant_log2tpm))) %>% 
+  dplyr::ungroup()
+
+batch_tpm_long <- batch_tpm_long %>% 
+  dplyr::left_join(tpm_meta)
+
+batch_tpm_long <- batch_tpm_long %>% 
+  dplyr::mutate(condition_treatment = ifelse(condition_treatment == "FC + DAPT", "DAPT", condition_treatment))
+
+
+# scaled tpm data:
+
+tpm_df_scaled <- tpm_df %>%
+  dplyr::rename(id_gene_symbol = gene_symbol) %>%
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled_tpm = as.numeric(scale(quant_tpm))) %>% 
+  dplyr::ungroup()
+
+## save for app:
+
+save(tpm_df_scaled, file = "../RData/BRCA_Cell_Lines_TPM.RData")
+save(batch_tpm_long, file = "../RData/BRCA_Cell_Lines_TPM_batch_corrected.RData")
+
+rm(batch_tpm_long, batch_tpm, batch_tpm_scaled,tpm_df_wide_na, Validation_df, Training_df, Validation_TPM, Training_TPM, tpm_df, batch_tpm_k)
+
+```
+
+# Cell Line characteristica
+
+## Combined plot
+
+```{r 08e-receptors-expression-hm, fig.height=2.5, fig.width=5}
+
+# load wikipathway notch
+
+Wikipathways_Notch <- msigdbr(species = "Homo sapiens") %>%
+  dplyr::filter(gs_subcat == "CP:WIKIPATHWAYS",
+                gs_name == "WP_NOTCH_SIGNALING")
+
+notch_pathways_genes_symbol <- unique(Wikipathways_Notch$human_gene_symbol) 
+notch_pathways_genes_entrez <- unique(Wikipathways_Notch$human_entrez_gene) 
+
+### CCLE phenotype data
+
+id_depmap_sanger_phe_cdr_dem <- "depmap_sanger_phe_cdr_dem_20q1_prod_budzinska_2"
+
+all_ccle_cell_lines <- api$conn %>% 
+  tbl(id_depmap_sanger_phe_cdr_dem) %>% 
+  pull(id_cell_line_name) %>% 
+  unique()
+
+# table(unique(batch_tpm_long$stripped_cell_line_name) %in% all_ccle_cell_lines)
+# FALSE  TRUE 
+#     1    22 
+
+# unique(batch_tpm_long$stripped_cell_line_name)[!unique(batch_tpm_long$stripped_cell_line_name) %in% all_ccle_cell_lines]
+# KPL4
+
+# cell line data:
+
+depmap_phe <- api$conn %>% 
+  tbl(id_depmap_sanger_phe_cdr_dem) %>% 
+   dplyr::filter(id_cell_line_name %in% !!unique(tpm_df_scaled$stripped_cell_line_name)) %>% 
+   dplyr::select(id_cell_line_name, id_depmap_id) %>% 
+   collect()
+
+# depmap_phe$id_cell_line_name %>% unique
+
+tpm_df_scaled <- tpm_df_scaled %>% 
+  dplyr::left_join(depmap_phe,
+                   by = c("stripped_cell_line_name" = "id_cell_line_name"))
+
+### mutation data
+
+# get first, which cell lines are covered by wes:
+
+id_depmap_ccle_dna_wes_snv <- "depmap_ccle_dna_wes_snv_20q4_dev_kreis_1"
+
+cell_lines_depmap <- api$conn %>% 
+  tbl(id_depmap_ccle_dna_wes_snv) %>% 
+  dplyr::filter(id_depmap_id %in% !!unique(tpm_df_scaled$id_depmap_id)) %>% 
+  dplyr::pull(id_depmap_id) %>% 
+  unique()
+
+notch_mutation_data <- api$conn %>% 
+  tbl(id_depmap_ccle_dna_wes_snv) %>% 
+  dplyr::filter(id_depmap_id %in% !!unique(tpm_df_scaled$id_depmap_id),
+                id_gene_entrez %in% !!unique(notch_pathways_genes_entrez),
+                variant_annotation != "silent") %>% 
+  dplyr::collect()
+
+# if variant_protein is NA -> take variant_genome and variant_consequence
+
+notch_mutation_data$variant <- ifelse(is.na(notch_mutation_data$variant_protein), 
+                                               paste0(notch_mutation_data$variant_consequence,"(", notch_mutation_data$variant_genome, ")"),
+                                               notch_mutation_data$variant_protein)
+
+notch_CCLE_mutations_20q4 <- notch_mutation_data %>% 
+  dplyr::select(c("variant", "id_gene_symbol", "id_depmap_id"))
+
+# Aggregate multiple mutations per gene into one string:
+
+notch_CCLE_mutations_20q4_agg <- aggregate(variant ~ id_gene_symbol + id_depmap_id, 
+                                              data = notch_CCLE_mutations_20q4, 
+                                              FUN = function(x) paste(unique(x), collapse=", "))
+
+
+notch_CCLE_mutations_20q4_wide <- pivot_wider(notch_CCLE_mutations_20q4_agg,
+                                      names_from = id_gene_symbol,
+                                      names_prefix = "mutated_",
+                                      values_from = variant)
+
+# fill with cell lines:
+notch_CCLE_mutations_20q4_wide <- data.frame(id_depmap_id  = cell_lines_depmap) %>% 
+  dplyr::left_join(notch_CCLE_mutations_20q4_wide)
+
+# replace NA
+
+notch_CCLE_mutations_20q4_wide <- notch_CCLE_mutations_20q4_wide %>%
+  mutate_at(vars(matches("mutated_")), function(x) ifelse(is.na(x), "wt", x))
+
+# add now to the "real used ones"
+
+notch_CCLE_mutations_20q4_wide <- data.frame(id_depmap_id = unique(tpm_df_scaled$id_depmap_id),
+           stringsAsFactors = FALSE) %>%
+  left_join(notch_CCLE_mutations_20q4_wide,
+            by = "id_depmap_id")
+
+notch_CCLE_mutations_20q4_long <- notch_CCLE_mutations_20q4_wide %>%
+  pivot_longer(-id_depmap_id,
+               names_to = "id_gene_symbol",
+               values_to = "mutation",
+               names_prefix = "mutated_") %>%
+  left_join(tpm_df_scaled %>%
+              dplyr::select(stripped_cell_line_name, id_depmap_id) %>%
+              dplyr::distinct())
+
+
+
+```
+
+```{r 08f-receptors-expression-hm, fig.height=8, fig.width=12}
+
+# DO NOT USE BATCH CORRECTED DATA:
+
+receptor_expression <- tpm_df_scaled %>%
+  filter(condition_treatment == "FC") %>%
+  filter(id_gene_symbol %in% c("ERBB2","ERBB3","ESR1","PGR","AR")) %>%
+  dplyr::select(id_gene_symbol, quant_scaled_tpm, condition_cell_line = stripped_cell_line_name, condition_subtype, condition_time, condition_replicate, condition_batch) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_receptor_expression <- receptor_expression %>% 
+  dplyr::select(-condition_subtype, -condition_replicate) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_time, condition_batch),
+                     values_from = quant_scaled_tpm,
+                     values_fn = mean) %>%
+  column_to_rownames("id_gene_symbol")
+
+# notch_expression <- batch_tpm_long %>%
+notch_expression <- tpm_df_scaled %>%
+  filter(condition_treatment == "FC") %>%
+  filter(id_gene_symbol %in% c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4")) %>%
+  dplyr::select(id_gene_symbol, quant_scaled_tpm, condition_cell_line = stripped_cell_line_name, condition_subtype, condition_time, condition_replicate, condition_batch) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_notch_expression <- notch_expression %>% 
+  dplyr::select(-condition_subtype, -condition_replicate) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_batch, condition_time),
+                     values_from = quant_scaled_tpm,
+                     values_fn = mean) %>%
+  column_to_rownames("id_gene_symbol")
+
+
+notch_CCLE_mutations_use_wide <- notch_expression %>%
+  dplyr::select(-id_gene_symbol, -quant_scaled_tpm) %>%
+  dplyr::distinct() %>%
+  left_join(notch_CCLE_mutations_20q4_long %>%
+    dplyr::select(-id_depmap_id),
+    by = c("condition_cell_line" = "stripped_cell_line_name")) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+  
+
+xlsx::write.xlsx(notch_CCLE_mutations_use_wide %>%
+                   dplyr::select(-condition_time, -condition_replicate, -condition_batch) %>%
+                   dplyr::distinct() %>%
+                   pivot_wider(names_from = id_gene_symbol,
+                               values_from = mutation),
+                 file = "../results/NOTCH_pathway_mutations.xlsx")
+
+matrix_notch_mutation <- notch_expression %>% 
+  dplyr::select(-condition_subtype, -id_gene_symbol, -quant_scaled_tpm) %>%
+  dplyr::left_join(notch_CCLE_mutations_use_wide) %>% 
+  dplyr::select(-condition_subtype, -condition_replicate) %>%
+  dplyr::distinct() %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line, condition_batch, condition_time),
+                     values_from = mutation) %>%
+  dplyr::filter(!is.na(id_gene_symbol)) %>%
+  column_to_rownames("id_gene_symbol")
+
+# header
+
+Subtype <- as.character(receptor_expression[,c("condition_cell_line", "condition_subtype", "condition_batch", "condition_time")] %>% distinct() %>% pull("condition_subtype"))
+Subtype_col <- all_subtype_colors[unique(Subtype)]
+
+Timepoint <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_batch", "condition_subtype")] %>% distinct() %>% pull("condition_time"))
+Timepoint_col <- time_colors[unique(Timepoint)]
+
+Batch <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_batch", "condition_subtype")] %>% distinct() %>% pull("condition_batch"))
+Batch_col <- batch_colors[unique(Batch)]
+
+Cell_Line <- as.character(receptor_expression[,c("condition_cell_line", "condition_time", "condition_batch", "condition_subtype")] %>% distinct() %>% pull("condition_cell_line"))
+set.seed(1234)
+
+Cell_Line_col <- sample(merck_colors_ext(1:40))[1:length(unique(Cell_Line))]
+names(Cell_Line_col) <- unique(Cell_Line)
+
+col_fun = colorRamp2(c(-2, 0, 2), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          `Cell Line` = Cell_Line,
+                                          Timepoint = Timepoint,
+                                          Batch = Batch,
+                                          col = list(Subtype = Subtype_col,
+                                                     `Cell Line` = Cell_Line_col,
+                                                     Timepoint = Timepoint_col,
+                                                     Batch = Batch_col), 
+                                          #annotation_name_side = "left",
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_receptor_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Expression of\nEndocrine\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          #title_position = "leftcenter-rot",
+                          direction = "horizontal")
+)
+
+ht2 <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Expression of\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        show_heatmap_legend = FALSE,
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+mutation_names <- unique(unlist(matrix_notch_mutation))
+mutation_names <- mutation_names[!is.na(mutation_names)]
+
+col_mut = c("lightgrey",sample(merck_colors_ext(1:40))[1:(length(mutation_names)-1)])
+names(col_mut) <- mutation_names
+
+
+ht3 <- ComplexHeatmap::Heatmap(matrix_notch_mutation,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Mutations in\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        column_names_gp = gpar(fontsize = 6),
+                        show_column_names = TRUE,
+                        col = col_mut,
+                        na_col = "white",
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "NOTCH Pathway\nMutations")
+                        
+)
+
+draw(ht %v% ht2 %v% ht3, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+```
+
+
+```{r 09-notch-expression-hm, fig.height=7, fig.width=10}
+
+receptor_expression <- tpm_df_scaled %>%
+  filter(condition_treatment == "FC") %>%
+  filter(id_gene_symbol %in% c("ERBB2","ERBB3","ESR1","PGR","AR")) %>%
+  dplyr::select(id_gene_symbol, quant_scaled_tpm, condition_cell_line = stripped_cell_line_name, condition_subtype, condition_time, condition_replicate, condition_batch) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_receptor_expression <- receptor_expression %>% 
+  dplyr::select(-condition_subtype, -condition_replicate, -condition_batch, -condition_time) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line),
+                     values_from = quant_scaled_tpm,
+                     values_fn = mean) %>%
+  column_to_rownames("id_gene_symbol")
+
+
+notch_expression <- tpm_df_scaled %>%
+  filter(condition_treatment == "FC") %>%
+  filter(id_gene_symbol %in% c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4")) %>%
+  dplyr::select(id_gene_symbol, quant_scaled_tpm, condition_cell_line = stripped_cell_line_name, condition_subtype, condition_time, condition_replicate, condition_batch) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line, desc(condition_time))
+
+matrix_notch_expression <- notch_expression %>% 
+  dplyr::select(-condition_subtype, -condition_replicate, -condition_batch, -condition_time) %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line),
+                     values_from = quant_scaled_tpm,
+                     values_fn = mean) %>%
+  column_to_rownames("id_gene_symbol")
+
+notch_CCLE_mutations_use_wide <- notch_expression %>%
+  dplyr::select(-id_gene_symbol, -quant_scaled_tpm, -condition_time, -condition_replicate, -condition_batch) %>%
+  dplyr::distinct() %>%
+  left_join(notch_CCLE_mutations_20q4_long %>%
+    dplyr::select(-id_depmap_id),
+    by = c("condition_cell_line" = "stripped_cell_line_name")) %>%
+  arrange(id_gene_symbol, condition_subtype, condition_cell_line)
+  
+matrix_notch_mutation <- notch_expression %>% 
+  dplyr::select(-condition_subtype, -id_gene_symbol, -quant_scaled_tpm,
+                -condition_time, -condition_replicate, -condition_batch) %>%
+  dplyr::left_join(notch_CCLE_mutations_use_wide) %>% 
+  dplyr::select(-condition_subtype) %>%
+  dplyr::distinct() %>%
+  tidyr::pivot_wider(names_from = c(condition_cell_line),
+                     values_from = mutation) %>%
+  dplyr::filter(!is.na(id_gene_symbol)) %>%
+  column_to_rownames("id_gene_symbol")
+
+matrix_notch_mutation <- matrix_notch_mutation %>% 
+  dplyr::mutate(across(everything(), ~ ifelse(. == "wt", "wt", paste0(!!rownames(matrix_notch_mutation), ": ", .))))
+
+# header
+
+Subtype <- as.character(receptor_expression[,c("condition_cell_line", "condition_subtype")] %>% distinct() %>% pull("condition_subtype"))
+Subtype_col <- all_subtype_colors[unique(Subtype)]
+
+Cell_Line <- as.character(receptor_expression[,c("condition_cell_line", "condition_subtype")] %>% distinct() %>% pull("condition_cell_line"))
+set.seed(1234)
+
+Cell_Line_col <- sample(merck_colors_ext(1:40))[1:length(unique(Cell_Line))]
+names(Cell_Line_col) <- unique(Cell_Line)
+
+
+Batch <- receptor_expression[,c("condition_cell_line", "condition_batch")] %>%
+                        distinct() %>%
+    tidyr::pivot_wider(names_from = "condition_cell_line",
+                       values_from = "condition_batch",
+                       values_fn = function(x) paste(sort(x), collapse = " + "))
+                        
+Batch_ordered <- as.character(Batch)
+names(Batch_ordered) <- names(Batch)
+
+Batch_ordered <- Batch_ordered[match(Cell_Line, names(Batch_ordered))]
+Batch_ordered <- as.character(Batch_ordered)
+
+Batch_col <- merck_colors[5:(4+length(unique(Batch)))]
+names(Batch_col) <- unique(Batch)
+
+
+col_fun = colorRamp2(c(-2, 0, 2), col_heatmap)
+
+col_ha = ComplexHeatmap::columnAnnotation(Subtype = Subtype,
+                                          `Cell Line` = Cell_Line,
+                                          Batch = Batch_ordered,
+                                          col = list(Subtype = Subtype_col,
+                                                     `Cell Line` = Cell_Line_col,
+                                                     Batch = Batch_col), 
+                                          annotation_legend_param = list(
+                                            Subtype = list(direction = "horizontal")
+                                            )
+)
+
+ht <- ComplexHeatmap::Heatmap(matrix_receptor_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Expression of\nEndocrine\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          #title_position = "leftcenter-rot",
+                          direction = "horizontal")
+)
+
+ht2 <- ComplexHeatmap::Heatmap(matrix_notch_expression,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Expression of\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                      # top_annotation = col_ha,
+                        show_column_names = TRUE,
+                        col = col_fun,
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        show_heatmap_legend = FALSE,
+                        heatmap_legend_param = list(
+                          title = "scaled log2(TPM+1)", 
+                          title_position = "leftcenter-rot")
+)
+
+mutation_names <- unique(unlist(matrix_notch_mutation))
+mutation_names <- mutation_names[!is.na(mutation_names)]
+
+col_mut = c("lightgrey",sample(merck_colors_ext(1:40))[1:(length(mutation_names)-1)])
+names(col_mut) <- mutation_names
+col_mut <- col_mut[order(names(col_mut))]
+
+ht3 <- ComplexHeatmap::Heatmap(matrix_notch_mutation,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                       # column_split  = col_split,
+                        row_title = "Mutations in\nNotch\nReceptors",
+                        row_title_rot = 0,
+                        row_title_gp = gpar(fontsize = 10),
+                        column_names_gp = gpar(fontsize = 10),
+                        show_column_names = TRUE,
+                        col = col_mut,
+                        na_col = "white",
+                        rect_gp = gpar(col = "white", lwd = 0.5),
+                        heatmap_legend_param = list(
+                          title = "NOTCH Pathway\nMutations")
+                        
+)
+
+draw(ht %v% ht2 %v% ht3, heatmap_legend_side = "right", annotation_legend_side = "right", merge_legends = TRUE)
+
+```
+
+## Signature scores in the experiments
+
+```{r message=FALSE, warning=FALSE, include=FALSE}
+
+signature_score <- function(x, df){
+  df %>% 
+    dplyr::filter(id_gene_symbol %in% x) %>% 
+    dplyr::group_by(sample_name, stripped_cell_line_name, condition_treatment, condition_time, condition_subtype, condition_replicate, condition_batch) %>% 
+    dplyr::summarise(quant_signature = mean(quant_scaled_tpm, na.rm = TRUE)) %>% 
+    dplyr::ungroup()
+}
+
+sig.scores_published.notch <- map_dfr(gs.list.published_notch, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
+
+sig.scores_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
+
+all_signatures <- sig.scores_published.notch %>% 
+    dplyr::bind_rows(sig.scores_opt.notch)
+
+```
+
+### Ground State signature scores in the validation cohort of breast cancer cell lines
+
+#### Statistics
+
+* basal-like subtype against the rest for the signature comparison
+* all comparisons for the plots (only basal against the rest printed) 
+  
+```{r}
+
+data_signature <- all_signatures %>%
+  dplyr::filter(condition_batch == "Validation",
+                condition_treatment == "FC") %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`   = 'ground state'))
+
+# Pairwise comparisons
+
+pwc_quant.signatures_all <- data_signature %>% 
+  #dplyr::group_by(id_geneset_name, condition_time) %>% # time not needed here
+  dplyr::group_by(id_geneset_name) %>%
+  rstatix::wilcox_test(quant_signature  ~ condition_subtype) %>% 
+  adjust_pvalue(method = "BH")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "subtype")
+
+data_signature$condition_subtype[data_signature$condition_subtype == "her2"] <- "other"
+data_signature$condition_subtype[data_signature$condition_subtype == "luma"] <- "other"
+data_signature$condition_subtype[data_signature$condition_subtype == "lumb"] <- "other"
+
+data_signature$condition_subtype <- factor(data_signature$condition_subtype)
+data_signature$condition_time <- factor(data_signature$condition_time, levels = c("8h", "72h"))
+
+# Pairwise comparisons
+
+pwc_quant.signatures <- data_signature %>% 
+  #dplyr::group_by(id_geneset_name, condition_time) %>% # time not needed here
+  dplyr::group_by(id_geneset_name) %>%
+  rstatix::wilcox_test(quant_signature  ~ condition_subtype) %>% 
+  adjust_pvalue(method = "BH")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "subtype")
+
+DT::datatable(pwc_quant.signatures %>% 
+                dplyr::select(-statistic),
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel'),        # definition of download buttons; Possible values: 'copy', 'csv', 'excel', 'pdf', 'print', each one increases the file size
+            headerCallback = DT::JS(                                    # font-size of table contents
+              "function(thead) {",
+              "  $(thead).css('font-size', '0.7em');",
+              "}"
+              )
+            )
+          )  %>%
+  DT::formatStyle(columns = c(1:(ncol(pwc_quant.signatures)-1)), fontSize = '70%')   # reduces font size of column titles
+
+# 
+# data_signature <- all_signatures %>%
+#   dplyr::filter(condition_batch == "Validation",
+#                 condition_treatment == "FC") %>%
+#   dplyr::mutate(condition_treatment=dplyr::recode_factor(
+#     condition_treatment,
+#     `FC`   = 'ground state'))
+# 
+# data_signature$condition_subtype <- factor(data_signature$condition_subtype)
+# data_signature$condition_time <- factor(data_signature$condition_time, levels = c("8h", "72h"))
+# 
+# # Pairwise comparisons
+# 
+# pwc_quant.signatures <- data_signature %>% 
+#   #dplyr::group_by(id_geneset_name, condition_time) %>% # time not needed here
+#   dplyr::group_by(id_geneset_name) %>%
+#   rstatix::wilcox_test(quant_signature  ~ condition_subtype) %>% 
+#   adjust_pvalue(method = "BH")  %>% 
+#   add_significance()
+
+# pwc_quant.signatures <- pwc_quant.signatures %>% 
+#   dplyr::filter(group1 == "basal")
+
+```
+
+```{r, fig.width=4, fig.height=5}
+
+detach("package:coin", unload=TRUE)
+
+# gs.list.opt_notch
+# sig.scores_opt.notch
+# 
+# gs.list.published_notch
+# sig.scores_published.notch
+
+for(i in focus_signatures){
+
+  data_signature <- all_signatures %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(condition_batch == "Validation",
+                  condition_treatment == "FC") %>%
+    dplyr::mutate(condition_treatment=dplyr::recode_factor(
+      condition_treatment,
+      `FC`   = 'ground state')) %>% 
+    dplyr::filter(condition_subtype != "lumb") # only one cell line of this subtype
+    
+  data_signature$condition_subtype <- factor(data_signature$condition_subtype, levels = c("basal", "her2", "luma"))
+ 
+  # Pairwise comparisons "dummy calculation" -> use p adjusted from previous calculation
+  
+  pwc <- data_signature %>% 
+    wilcox_test(as.formula(paste(make.names(i), "condition_subtype", sep = " ~ ")), 
+              p.adjust.method = "BH") %>% 
+   # dplyr::filter(group1 == "basal") %>% 
+    add_xy_position(x = "condition_subtype")
+  
+  pwc_quant.signatures_use <- pwc_quant.signatures_all %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  # ,group1 == "basal"
+  
+  pwc$p <- pwc_quant.signatures_use$p
+  pwc$p.adj <- signif(pwc_quant.signatures_use$p.adj, digits = 3)
+  pwc$p.adj.signif <- pwc_quant.signatures_use$p.adj.signif
+  
+  p <- ggboxplot(data_signature, 
+            x = "condition_subtype", 
+            y = make.names(i),
+            fill = "condition_subtype") + 
+    stat_pvalue_manual(
+      pwc, 
+      label = "p.adj.signif", 
+      hide.ns = TRUE) +
+  labs(title = paste0("Ground state of signature\n", i),
+       x = "Treatment",
+       y = "Ground State Signature Score",
+       fill = "Subtype",
+       caption = get_pwc_label(pwc_quant.signatures)) +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = all_subtype_colors[levels(factor(data_signature$condition_subtype))]) + 
+    theme(legend.position="right")
+    
+  print(p)
+}
+```
+
+### Relative signature scores (Treatment - Ground State) at both time points in the validation cohort of breast cancer cell lines
+
+```{r, fig.width=4, fig.height=5}
+
+# gs.list.opt_notch
+# sig.scores_opt.notch
+# 
+# gs.list.published_notch
+# sig.scores_published.notch
+
+
+  # calculate relative signature score
+  
+  data_signature_rel <- all_signatures %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(condition_batch == "Validation") %>%
+    dplyr::mutate(condition_treatment=dplyr::recode_factor(
+      condition_treatment,
+      `FC`   = 'ground state',
+      `FC + DAPT`      = 'Notch off',
+      `Jagged1`     = 'Notch on',
+      `Jagged1 + DAPT`  = 'Notch on/off')) %>% 
+    dplyr::filter(condition_subtype != "lumb")
+    
+  complete_cell_lines <- data_signature_rel %>%
+    dplyr::filter(condition_treatment != 'Notch on/off') %>% 
+    dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>% 
+      dplyr::group_by(stripped_cell_line_name, condition_time) %>%
+      dplyr::summarise(n = n()) %>%
+      dplyr::ungroup() %>%
+      dplyr::filter(n == 3) %>%
+      dplyr::select(stripped_cell_line_name, condition_time)
+  
+  data_signature_rel <- data_signature_rel %>%
+    dplyr::right_join(complete_cell_lines) %>%
+    tidyr::pivot_longer(-c(1:7),
+                        names_to = "id_geneset_name",
+                        values_to = "score") %>%
+    dplyr::select(-sample_name) %>% 
+    tidyr::pivot_wider(names_from = "condition_treatment",
+                       values_from = "score") %>%
+      dplyr::mutate(`Notch on` = `Notch on` - `ground state`,
+                    `Notch off` = `Notch off` - `ground state`) %>%
+      dplyr::select(-`ground state`, -`Notch on/off`) %>% 
+    dplyr::mutate(condition_subtype = factor(condition_subtype))
+  
+  data_signature_rel <- data_signature_rel %>% 
+    tidyr::pivot_longer(-c(1:6),
+                        names_to = "condition_treatment",
+                        values_to = "quant_rel")
+  
+# Kruskal-Wallis Test
+
+  res.kruskal_rel <- data_signature_rel %>% 
+    dplyr::group_by(id_geneset_name, condition_subtype) %>% 
+    kruskal_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ ")))
+  
+# Pairwise comparisons
+  
+  pwc_rel <- data_signature_rel %>% 
+    group_by(id_geneset_name, condition_subtype) %>%
+    wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance("p.adj") %>% 
+    add_xy_position(x = "condition_subtype")
+  
+  # comparison: basal against other
+  
+  data_signature_rel_other <- data_signature_rel %>% 
+    dplyr::mutate(condition_subtype = factor(ifelse(condition_subtype == "basal", "basal", "other"), levels = c("basal", "other")))
+  
+  pwc_rel_other <- data_signature_rel_other %>% 
+    group_by(id_geneset_name, condition_subtype) %>%
+    wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
+    adjust_pvalue(method = "BH") %>%
+    add_significance("p.adj") %>% 
+    add_xy_position(x = "condition_subtype")
+  
+for(i in focus_signatures){
+  
+  data_signature_use <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!make.names(i)) %>% 
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name))
+  
+  max_y <- pwc_rel %>% 
+    dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% pull(y.position) %>% max
+  
+  p <- ggboxplot(data_signature_use, 
+            x = "condition_subtype", 
+            y = "quant_rel",
+            fill = "condition_treatment") +
+   # facet_wrap(~condition_time) +
+  stat_pvalue_manual(pwc_rel %>% 
+                       dplyr::filter(id_geneset_name == !!make.names(i)), 
+                     hide.ns = TRUE) +
+  labs(title = paste0("Relative change of signature:\n",i),
+       x = "Treatment",
+       y = "Relative Signature Score",
+       fill = "Treatment",
+       #subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(pwc_rel)) +
+    # ylim(c(-1,1)) +
+    coord_cartesian(ylim = c(-max_y,max_y)) +
+    scale_fill_manual(values = treatment_colors[levels(factor(data_signature_use$condition_treatment))]) + 
+    theme(legend.position="right")
+    
+  print(p)
+}
+#dev.off()
+```
+
+#### Statistics
+
+Only basal-like subtype of interest for multiple testing correction.  
+
+```{r}
+
+DT::datatable(pwc_rel %>% 
+                dplyr::select(-statistic, -`.y.`, -y.position, -groups, -x, -xmin, -xmax),
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel'),        # definition of download buttons; Possible values: 'copy', 'csv', 'excel', 'pdf', 'print', each one increases the file size
+            headerCallback = DT::JS(                                    # font-size of table contents
+              "function(thead) {",
+              "  $(thead).css('font-size', '0.7em');",
+              "}"
+              )
+            )
+          )  %>%
+  DT::formatStyle(columns = c(1:10), fontSize = '70%')   # reduces font size of column titles
+
+```
+
+# Ground State Signature Scores and the relative change in signature score
+
+```{r scatter_notch, fig.height=4, fig.width=5}
+
+data_signature <- data_signature_rel %>% 
+  dplyr::rename(delta_signature = quant_rel) %>% 
+  dplyr::left_join(all_signatures %>% 
+                     dplyr::filter(condition_treatment == "FC") %>% 
+                     dplyr::rename(ground_level = "quant_signature") %>% 
+                     dplyr::select(-sample_name, -condition_treatment) %>% 
+                     dplyr::mutate(id_geneset_name = make.names(id_geneset_name)))
+# 
+# data_signature <- all_signatures %>%
+#   tidyr::pivot_wider(names_from = "id_geneset_name",
+#                      values_from = "quant_signature") %>% 
+#   dplyr::filter(condition_batch == "Validation") %>%
+#   dplyr::mutate(condition_treatment=dplyr::recode_factor(
+#     condition_treatment,
+#     `FC`   = 'ground state',
+#     `FC + DAPT`      = 'Notch off',
+#     `Jagged1`     = 'Notch on',
+#     `Jagged1 + DAPT`  = 'Notch on/off'))
+# 
+# complete_cell_lines <- data_signature %>%
+#   dplyr::filter(condition_treatment != 'Notch on/off') %>% 
+#   dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>% 
+#     dplyr::group_by(stripped_cell_line_name, condition_time) %>%
+#     dplyr::summarise(n = n()) %>%
+#     dplyr::ungroup() %>%
+#     dplyr::filter(n == 3) %>%
+#     dplyr::select(stripped_cell_line_name, condition_time)
+# 
+# data_signature <- data_signature %>%
+#   dplyr::right_join(complete_cell_lines) %>% 
+#   dplyr::select(-condition_replicate) %>% 
+#   dplyr::filter(condition_treatment != "Notch on/off") %>% 
+#   pivot_longer(-c(sample_name, stripped_cell_line_name, condition_treatment, condition_time, condition_subtype, condition_batch),
+#                  names_to = "id_geneset",
+#                  values_to = "quant_signature")#
+# 
+# data_signature <- data_signature %>% 
+#   dplyr::left_join(data_signature %>% 
+#                      dplyr::filter(condition_treatment == "ground state") %>% 
+#                      dplyr::rename(ground_level = quant_signature) %>% 
+#                      dplyr::select(-condition_treatment, -sample_name)) %>% 
+#   dplyr::rowwise() %>% 
+#   dplyr::mutate(delta_signature = quant_signature - ground_level) %>% 
+#   dplyr::ungroup() %>% 
+#   dplyr::select(-quant_signature) %>% 
+#   dplyr::filter(condition_treatment != "ground state")
+
+for(i in focus_signatures){
+    
+  data_scatter <- data_signature %>%
+    dplyr::filter(id_geneset_name == !!make.names(i))
+  
+  sp <- ggscatter(data_scatter, 
+                  x = "ground_level", 
+                  y = "delta_signature",
+                  color = "condition_treatment",
+                  shape = "condition_subtype",
+                  palette = merck_colors[c(2,1)],
+                  legend = "right") +
+    geom_smooth(aes(color = condition_treatment), 
+                method = "lm",
+                fill = "lightgrey") +  
+    stat_cor(aes(color = condition_treatment),
+                  label.x = min(data_scatter$ground_level)*0.9,
+                  #label.y = min(data_scatter$delta_signature)*0.9,
+                  p.accuracy = 0.001, 
+                  r.accuracy = 0.01,
+                  show.legend = FALSE) +
+      labs(x = "Ground State Signature Score",
+           y = "Relative Signature Score Change",
+           title = i,
+           color = "Treatment",
+           shape = "Subtype")
+  print(sp)
+
+}
+```
+
+
+# Ground State Signature Scores and the relative change in signature score - only DAPT
+
+```{r scatter_notch_ground_delta, fig.height=4, fig.width=5}
+
+for(i in focus_signatures){
+    
+  data_scatter <- data_signature %>%
+    dplyr::filter(id_geneset_name == !!make.names(i),
+                  condition_treatment == "Notch off")
+
+  sp <- ggscatter(data_scatter, 
+                  x = "ground_level", 
+                  y = "delta_signature",
+                  color = "condition_time",
+                  shape = "condition_subtype",
+                  palette = merck_colors[c(2,1,3,4)],
+                  legend = "right") +
+    geom_smooth(aes(color = condition_time), 
+                method = "lm",
+                fill = "lightgrey") +  
+    stat_cor(aes(color = condition_time),
+                  label.x = min(data_scatter$ground_level)*0.9,
+                  #label.y = min(data_scatter$delta_signature)*0.9,
+                  p.accuracy = 0.001, 
+                  r.accuracy = 0.01,
+                  show.legend = FALSE) +
+      labs(x = "Ground State Signature Score",
+           y = "Relative Signature Score Change\nupon DAPT treatment",
+           title = i,
+           color = "Time",
+           shape = "Subtype")
+  print(sp)
+
+}
+```
+
+```{r}
+
+# save.image("../RData/06-Image.RData")
+
+pwc_delta.signatures_all = pwc_rel
+pwc_delta.signatures = pwc_rel_other
+
+save(gs.list.published_notch, 
+     gs.list.opt_notch,
+     gsea_Jagged1_DAPT,
+     gsea_Jagged1_DAPT_8h,
+     gsea_Jagged1_DAPT_72h,
+     pwc_quant.signatures,
+     pwc_quant.signatures_all,
+     pwc_delta.signatures,
+     pwc_delta.signatures_all,
+     file = "../RData/Part6.RData")
+
+```
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

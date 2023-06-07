@@ -1,0 +1,2862 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 7b - Evaluation of NOTCH signatures in public patient cohorts"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part7b.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part7b/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+
+library(readxl)
+library(xlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(ggnewscale)
+library(cowplot)
+library(circlize)
+library(ggthemes)
+library(ComplexHeatmap)
+
+library(rmarkdown)
+library(DT)
+
+library(rstatix)
+
+library(furrr)
+
+library(viridis)
+
+# Merck X-Omics Platform:
+
+library(ProfilerAPI2)
+# library(xopdata)
+# getsrc <- xopdata::get_src()
+
+# Citations:
+
+knitr::write_bib(file = '../src/part7b.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+all_subtype_colors <- c(subtype_colors, c("lumb" = as.character(merck_colors[4])))
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+batch_colors <- merck_colors[c(5,9)]
+names(batch_colors) <- c("Validation", "Training")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+</div>
+  
+**Methods**
+
+1. Correlation of the public and study derived signatures in public data sets to tumor purity / immune infiltration.
+2. Testing of the PAM50-subtypes and Hormone-Receptor status against the signatures
+3. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
+4. Understand the relation of the signatures against each other.  
+
+**Conclusion**  
+
+<div class = "box">
+
+Even with relatively high coherence scores, the signatures by Vilimas et al. and Klinakis et al. show high correlation with immune infiltration. The only measure, the 20-gene Notch Signature does not show significance was the identification of the hormone status of the patient by applying the signature score. The basal-like status on the other hand could be significantly identified. In all measures together, our signature was able to show its value in the breast cancer setting.
+The 20-gene Notch Signature correlates best in all three patient data sets with the Biocarta Notch signature and the signature developed by Braune et al. 2016. 
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], `ggrepel` [@R-ggrepel] and `ggnewscale` [@R-ggnewscale].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT]. Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].     
+
+**Statistics**  
+Statistics where calculated using the `rstatix` package [@R-rstatix].  
+
+# Load Data
+
+Load only necessary data to allow these analyses:  
+
+```{r 02-load_previous_data}
+
+base::load("../RData/Part2.RData")
+
+rm(gene_set_list_opt_notch,
+   cs_all_optimized,
+   cs_df_Oslo2,
+   cs_df_metabric,
+   cs_df_TCGA,
+   cpm_mat_full, 
+   tpm_mat_full, 
+   metabric_gene_expession_data_scaled_wide_full, 
+   Oslo2_gene_expession_data_wide_full)
+
+base::load("../RData/Part3.RData")
+base::load("../RData/Part6.RData")
+
+```
+
+# Correlation of signatures to tumor purity / immune infiltration
+
+## Load clinical data sets
+
+### Data Sources
+
+```{r 03-data_sources, cache=TRUE}
+
+gene_universe <- unique(c(unlist(gs.list.published_notch), unlist(gs.list.opt_notch)))
+
+# Internal Access to Data Lake
+# Data sets as described in the manuscript
+
+api = ProfilerAPI2::profiler_api(profile = "myprofile")   ## needed for Rmarkdown connection to ProfilerAPI2
+con <- api$conn
+
+# load TCGA data:
+
+## TMM normalized expression data
+id_xena_tcga <- "merck_tcga_rna_wtstmm_gexp_21q2_prod_kreis_2"
+
+expr_xena_tcga_tmm <- api$conn %>%
+  tbl(id_xena_tcga) %>%  
+  dplyr::filter(sample_status == "primary tumor",
+                id_gene_symbol %in% gene_universe,
+                id_tcga_cohort == "BRCA") %>% 
+  dplyr::select(id_tcga_participant_barcode, id_gene_symbol, quant_tmm_tpm) %>% 
+  dplyr::collect()
+
+id_xena_tcga_wts <- "xena_tcga_rna_wts_gexp_20q1_prod_schelhorn_2"
+
+expr_xena_tcga_db <-  api$conn %>%
+  tbl(id_xena_tcga_wts) %>% 
+  dplyr::filter(id_gene_symbol == "TP53") %>% 
+  dplyr::select(id_tcga_participant_barcode, meta_source, meta_measurement) %>% 
+  dplyr::collect() %>% 
+  dplyr::distinct()
+
+expr_xena_tcga_source <- unique(expr_xena_tcga_db$meta_source)
+expr_xena_tcga_measurement <- paste0(unique(expr_xena_tcga_db$meta_measurement), "|transformation:TMM_normalization|curator:kreis")
+
+## Clinical
+
+phe_tcga_1 <- api$conn %>%
+  tbl(id_xena_tcga_wts) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                id_gene_symbol == "TP53") %>% 
+  dplyr::select(id_tcga_participant_barcode, meta_source, meta_measurement,
+                sample_disease_stage, subject_sex,
+                sample_percent_lymphocyte, sample_percent_monocyte, sample_percent_neutrophil,
+                sample_percent_normal_cells, sample_percent_stromal_cells, sample_percent_tumor_cells) %>% 
+  dplyr::collect() %>% 
+  dplyr::distinct()
+
+phe_tcga_source <- unique(phe_tcga_1$meta_source)
+
+phe_tcga_1 <- phe_tcga_1 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# Simplify Stage:
+
+phe_tcga_1$sample_disease_stage <- str_remove(phe_tcga_1$sample_disease_stage, "[ABC]{1}$")
+phe_tcga_1$sample_disease_stage[phe_tcga_1$sample_disease_stage == "[Discrepancy]"] <- NA
+
+if_oncbi_tcga_multiple_multiple_publishedsubtypes <- "oncbi_tcga_multiple_multiple_publishedsubtypes_20q3_dev_rolfe_0"
+
+phe_tcga_2 <- api$conn %>%
+  tbl(if_oncbi_tcga_multiple_multiple_publishedsubtypes) %>% 
+  dplyr::select(id_tcga_participant_barcode, subtype_key, subtype_value) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                subtype_key %in% c("sub_menopause_status_xenadb",
+                                   "sub_her2_status_xenadb",
+                                   "sub_pr_status_xenadb",
+                                   "sub_breast_carcinoma_estrogen_receptor_status_xenadb",
+                                   "sub_pam50_26451490", "sub_pam50_call_xenadb")) %>% 
+  dplyr::collect() %>%
+  dplyr::distinct()
+
+phe_tcga_source <- paste0(phe_tcga_source,"|",paste(paste0("pmid:",na.omit(str_extract(str_remove(unique(phe_tcga_2$subtype_key), "^.+\\_"), "[0-9]+"))), collapse = "<br />"))
+phe_tcga_measurement <- "see publications"
+
+phe_tcga_2 <- phe_tcga_2 %>% 
+  tidyr::pivot_wider(names_from = "subtype_key",
+                     values_from = "subtype_value")
+
+phe_tcga_2$sub_pam50 <- ifelse(is.na(phe_tcga_2$sub_pam50_call_xenadb), phe_tcga_2$sub_pam50_26451490, phe_tcga_2$sub_pam50_call_xenadb)
+
+phe_tcga_2 <- phe_tcga_2 %>% 
+  dplyr::select(-sub_pam50_call_xenadb, -sub_pam50_26451490)
+
+# simplify columns:
+
+phe_tcga_2$sub_menopause_status_xenadb[phe_tcga_2$sub_menopause_status_xenadb == "Indeterminate (neither Pre or Postmenopausal)"] <- NA
+
+phe_tcga_2$sub_pr_status_xenadb[phe_tcga_2$sub_pr_status_xenadb == "Indeterminate"] <- NA
+
+phe_tcga_2$sub_breast_carcinoma_estrogen_receptor_status_xenadb[phe_tcga_2$sub_breast_carcinoma_estrogen_receptor_status_xenadb == "Indeterminate"] <- NA
+
+# Receptor Status:
+
+phe_tcga_2$Hormone_Receptor_Status <- ifelse(phe_tcga_2$sub_her2_status_xenadb == "Positive", "Her2 Positive",
+                                             ifelse(phe_tcga_2$sub_pr_status_xenadb == "Negative" &
+                                                      phe_tcga_2$sub_pr_status_xenadb == "Negative", "Triple Negative", "Hormone Receptor Positive"))
+
+phe_tcga <- phe_tcga_1 %>% 
+  full_join(phe_tcga_2)
+
+### Add estimate scores:
+# From: https://bioinformatics.mdanderson.org/estimate/tables/breast_cancer_RNAseqV2.txt
+
+breast_cancer_Estimate_Scores <- read_delim("../data/breast_cancer_Estimate_Scores.txt",
+    delim = "\t", escape_double = FALSE,
+    trim_ws = TRUE)
+
+colnames(breast_cancer_Estimate_Scores) <- c("id_tcga_participant_barcode", "stromalscore_24113773", "immunescore_24113773", "estimatescore_24113773")
+
+breast_cancer_Estimate_Scores$id_tcga_participant_barcode <- str_remove(breast_cancer_Estimate_Scores$id_tcga_participant_barcode, "\\-[0-9]{2}$")
+
+breast_cancer_Estimate_Scores <- breast_cancer_Estimate_Scores %>%
+  dplyr::group_by(id_tcga_participant_barcode) %>%
+  dplyr::summarise(stromalscore_24113773 = mean(stromalscore_24113773),
+                   immunescore_24113773 = mean(immunescore_24113773),
+                   estimatescore_24113773 = mean(estimatescore_24113773)
+                   )
+
+phe_tcga <- phe_tcga %>%
+  dplyr::left_join(breast_cancer_Estimate_Scores)
+
+#### immune readouts:
+
+oncbi_tcga_rna_multiple_immunepublishedreadouts <- "oncbi_tcga_rna_multiple_immunepublishedreadouts_20q3_dev_rolfe_0"
+
+phe_tcga_immuno <- api$conn %>%
+  tbl(oncbi_tcga_rna_multiple_immunepublishedreadouts) %>% 
+  dplyr::filter(id_tcga_participant_barcode %in% !!unique(expr_xena_tcga_tmm$id_tcga_participant_barcode),
+                immune_quantity_name %in% c("imm_tumor_purity_by_method_absolute_26634437",
+"imm_infiltration_timer_cd4_pos_t_cell_27549193",
+"imm_infiltration_timer_cd8_pos_t_cell_27549193",
+"imm_infiltration_timer_b_cell_27549193",
+"imm_infiltration_timer_dendritic_27549193",
+"imm_infiltration_timer_macrophage_27549193",
+"imm_infiltration_timer_neutrophil_27549193",
+"imm_infiltration_cibersort_b_cells_30154154",
+"imm_infiltration_cibersort_th_cells_30154154")) %>% 
+  dplyr::select(id_tcga_participant_barcode, immune_quantity_name, immune_quantity) %>% 
+  dplyr::collect()
+
+phe_tcga_immuno <- phe_tcga_immuno %>%
+  dplyr::group_by(id_tcga_participant_barcode, immune_quantity_name) %>%
+  dplyr::summarise(immune_quantity = mean(immune_quantity))
+
+phe_tcga_immuno <- phe_tcga_immuno %>% 
+  tidyr::pivot_wider(names_from = "immune_quantity_name",
+                     values_from = "immune_quantity")
+
+phe_tcga <- phe_tcga %>%
+  dplyr::left_join(phe_tcga_immuno)
+
+# load Metabric data
+
+## Expression
+
+id_metabric <- "cbioportal_metabric_rna_microarray_gexp_22q1_prod_geist_0"
+
+expr_cbioportal_metabric <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::select(-id_gene_entrez_id) %>% 
+  dplyr::filter(id_gene_symbol %in% gene_universe) %>% 
+  dplyr::collect()
+
+expr_cbioportal_metabric_source <- unique(expr_cbioportal_metabric$meta_source)
+expr_cbioportal_metabric_measurement <- unique(expr_cbioportal_metabric$meta_measurement)
+
+expr_cbioportal_metabric <- expr_cbioportal_metabric %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+## Clinical
+
+id_cbioportal_metabric_phe_cdr_dem <- "cbioportal_metabric_phe_cdr_dem_22q1_prod_geist_0"
+
+phe_cbioportal_metabric <- api$conn %>%
+  tbl(id_cbioportal_metabric_phe_cdr_dem) %>% 
+  dplyr::select(id_patient_id, age_at_diagnosis_27161491, laterality_27161491, inferred_menopausal_state_27161491, cellularity_27161491, purity_27161491, stromalscore_24113773, immunescore_24113773, estimatescore_24113773, cellularity_27161491, er_ihc_27161491, her2_snp6_27161491, threegene_27161491, pam50_22522925, claudin_subtype_27161491, meta_source, meta_measurement) %>% 
+  dplyr::collect()
+
+phe_cbioportal_metabric_source <- unique(phe_cbioportal_metabric$meta_source)
+phe_cbioportal_metabric_measurement <- unique(phe_cbioportal_metabric$meta_measurement)
+
+phe_cbioportal_metabric <- phe_cbioportal_metabric %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# load Oslo2 data
+
+## Expression
+
+id_gse80999_oslo2_rna_microarray_gexp <- "gse80999_oslo2_rna_microarray_gexp_22q1_prod_geist_2"
+
+expr_gse80999_oslo2 <- api$conn %>%
+  tbl(id_gse80999_oslo2_rna_microarray_gexp) %>% 
+  dplyr::select(-id_gene_entrez_id) %>% 
+  dplyr::filter(id_gene_symbol %in% gene_universe) %>% 
+  dplyr::collect()
+
+expr_gse80999_oslo2_source <- unique(expr_gse80999_oslo2$meta_source)
+expr_gse80999_oslo2_measurement <- unique(expr_gse80999_oslo2$meta_measurement)
+
+expr_gse80999_oslo2 <- expr_gse80999_oslo2 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+## Clinical
+
+id_gse80999_oslo2_phe_cdr_dem <- "gse80999_oslo2_phe_cdr_dem_22q1_prod_geist_1"
+
+phe_gse80999_oslo2 <- api$conn %>%
+  tbl(id_gse80999_oslo2_phe_cdr_dem) %>%  
+  dplyr::select(id_patient_id, id_geoid, stromalscore_24113773, immunescore_24113773, estimatescore_24113773, er_ihc_28356166, her2_ihc_cish_28356166, pam50_28356166, claudinlow_32286297, pam50tocl_32286297, meta_source, meta_measurement) %>% 
+  dplyr::collect()
+
+phe_gse80999_oslo2_source <- unique(phe_gse80999_oslo2$meta_source)
+phe_gse80999_oslo2_measurement <- unique(phe_gse80999_oslo2$meta_measurement)
+
+phe_gse80999_oslo2 <- phe_gse80999_oslo2 %>% 
+  dplyr::select(-meta_source, -meta_measurement)
+
+# Data Sources
+
+format_category <- function(x) {
+  x <- stringr::str_replace_all(x, "\\|", "<br /><strong>")
+  x <- paste0("<strong>",x)
+  x <- stringr::str_replace_all(x, "\\:", "\\:</strong> ")
+  x <- stringr::str_replace_all(x, "_", " ")
+  x
+}
+
+# First Data Source
+Data_Sources <- data.frame(Type = "METABRIC - Expression Data",
+                           Source = format_category(expr_cbioportal_metabric_source),
+                           Measurement = format_category(expr_cbioportal_metabric_measurement))
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "METABRIC - clinical annotation",
+               Source = format_category(phe_cbioportal_metabric_source),
+               Measurement = format_category(phe_cbioportal_metabric_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2 - Expression Data",
+               Source = format_category(expr_gse80999_oslo2_source),
+               Measurement = format_category(expr_gse80999_oslo2_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "Oslo2 - clinical annotation",
+               Source = format_category(phe_gse80999_oslo2_source),
+               Measurement = format_category(phe_gse80999_oslo2_measurement))
+  )
+
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "TCGA - Expression Data",
+               Source = format_category(expr_xena_tcga_source),
+               Measurement = format_category(expr_xena_tcga_measurement))
+  )
+
+# Add more Data Sources
+Data_Sources <- Data_Sources %>%
+  bind_rows(
+    data.frame(Type = "TCGA - clinical annotation",
+               Source = format_category(phe_tcga_source),
+               Measurement = format_category(phe_tcga_measurement))
+  )
+
+knitr::kable(Data_Sources,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::row_spec(1:nrow(Data_Sources), underline = F, extra_css = "border-bottom: 1px solid;") %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+```
+
+# Continue from Notch Analysis Part 7a
+
+```{r}
+base::load(file = "../RData/Part7a.RData")
+```
+
+## Subtype
+
+For TCGA, we have both, IHC and PAM50 signature subtype status, for METABRIC and Oslo2 only PAM50.
+
+Pairwise two sample tests are performed for comparing each subtype levels against other subtypes (against her2, luma, lumb, ignore Normal for now). Also all comparisons are calculated to label the plots correctly with the adjusted P values.
+
+```{r 15-Hormon_status_calculation_TCGA}
+
+########### Hormone Receptor Status ############
+
+sig.scores_tcga_hormone_receptor_status <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, Hormone_Receptor_Status) %>% 
+  dplyr::distinct()
+
+# simplify naming:
+
+sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status <- ifelse(sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status == "Triple Negative", "TNBC", 
+ifelse(sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status == "Hormone Receptor Positive", "HR+", 
+ifelse(sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status == "Her2 Positive", "Her2+",sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status)))
+
+clin.test_tcga_hormone_receptor_status_all <- sig.scores_tcga_hormone_receptor_status %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ Hormone_Receptor_Status) %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "hormone_receptor_status") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status_TNBC <- factor(ifelse(sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status == "TNBC", "TNBC", "other"), levels = c("TNBC", "other"))
+
+clin.test_tcga_hormone_receptor_status <- sig.scores_tcga_hormone_receptor_status %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ Hormone_Receptor_Status_TNBC,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "hormone_receptor_status") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+########### ER ############
+
+# expectation: ER negative should have larger signature scores than ER positive
+
+sig.scores_tcga_er_status <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, estrogen_receptor_status = sub_breast_carcinoma_estrogen_receptor_status_xenadb) %>% 
+  dplyr::distinct()
+
+sig.scores_tcga_er_status$estrogen_receptor_status <- factor(sig.scores_tcga_er_status$estrogen_receptor_status, levels = c("Negative", "Positive"))
+
+clin.test_tcga_er_status <- sig.scores_tcga_er_status %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ estrogen_receptor_status,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "estrogen_receptor_status") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+########### PR ############
+
+# expectation: PR negative should have larger signature scores than PR positive
+
+sig.scores_tcga_pr_status <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, progesteron_receptor_status = sub_pr_status_xenadb) %>% 
+  dplyr::distinct()
+
+sig.scores_tcga_pr_status$progesteron_receptor_status <- factor(sig.scores_tcga_pr_status$progesteron_receptor_status, levels = c("Negative", "Positive"))
+
+clin.test_tcga_pr_status <- sig.scores_tcga_pr_status %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ progesteron_receptor_status,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "progesteron_receptor_status") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+
+########### HER2 ############
+
+# expectation: Her2 negative should have larger signature scores than Her2 positive, three levels present -> stricter test
+
+sig.scores_tcga_her2_status <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, her2_receptor_status = sub_her2_status_xenadb) %>% 
+  dplyr::distinct()
+
+sig.scores_tcga_her2_status$her2_receptor_status <- factor(sig.scores_tcga_her2_status$her2_receptor_status, levels = c("Negative", "Equivocal", "Positive"))
+
+clin.test_tcga_her2_status <- sig.scores_tcga_her2_status %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ her2_receptor_status) %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "her2_receptor_status") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+######## PAM50 ##########
+
+# expectation: Basel-like should have larger signature scores than other subtypes
+
+sig.scores_tcga_pam50 <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, sub_pam50) %>% 
+  dplyr::distinct()
+
+sig.scores_tcga_pam50$sub_pam50_basal <- factor(ifelse(sig.scores_tcga_pam50$sub_pam50 == "Normal", NA,
+                                                ifelse(sig.scores_tcga_pam50$sub_pam50 == "Basal", "Basal", "other")),
+                                                levels = c("Basal", "other"))
+
+clin.test_tcga_pam50_all <- sig.scores_tcga_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ sub_pam50) %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "sub_pam50") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+clin.test_tcga_pam50 <- sig.scores_tcga_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ sub_pam50_basal,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "sub_pam50_basal") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+sig.scores_metabric_pam50 <- sig.scores_metabric_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_metabric_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, pam50_22522925) %>% 
+  dplyr::distinct()
+
+sig.scores_metabric_pam50$pam50_22522925_basal <- factor(ifelse(sig.scores_metabric_pam50$pam50_22522925 == "Normal", NA, 
+                                                ifelse(sig.scores_metabric_pam50$pam50_22522925 == "Basal", "Basal", "other")),levels = c("Basal", "other"))
+
+
+clin.test_metabric_pam50_all <- sig.scores_metabric_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ pam50_22522925) %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "pam50_22522925") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+clin.test_metabric_pam50 <- sig.scores_metabric_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ pam50_22522925_basal,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "pam50_22522925_basal") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+sig.scores_oslo2_pam50 <- sig.scores_oslo2_opt.notch %>% 
+  dplyr::bind_rows(sig.scores_oslo2_published.notch) %>% 
+  dplyr::select(patient_id, id_geneset_name, quant_signature, pam50_28356166) %>% 
+  dplyr::distinct()
+
+sig.scores_oslo2_pam50$pam50_28356166_basal <- factor(ifelse(sig.scores_oslo2_pam50$pam50_28356166 == "Normal", NA, 
+                                                ifelse(sig.scores_oslo2_pam50$pam50_28356166 == "Basal", "Basal", "other")),
+                                                levels = c("Basal", "other"))
+
+
+clin.test_oslo2_pam50_all <- sig.scores_oslo2_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ pam50_28356166) %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "pam50_28356166") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+clin.test_oslo2_pam50 <- sig.scores_oslo2_pam50 %>% 
+  dplyr::group_by(id_geneset_name) %>% 
+  wilcox_test(data = ., quant_signature ~ pam50_28356166_basal,
+              alternative = "greater") %>% 
+  adjust_pvalue(method = "holm")  %>% 
+  add_significance() %>% 
+  dplyr::rename(var1 = ".y.") %>% 
+  dplyr::mutate(var2 = "pam50_28356166_basal") %>% 
+  dplyr::select(id_geneset_name, var1, var2, group1, group2, n1, n2, p, p.adj, p.adj.signif)
+
+```
+
+### TCGA:
+
+#### Signature scores, stratified by endocrine receptor status
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 16-plot_correlation_endocrine_TCGA}
+
+plot_list_endocrine_receptors <- list()
+
+HR_levels <- sig.scores_tcga_hormone_receptor_status$Hormone_Receptor_Status %>%
+  unique %>% 
+  na.omit %>% 
+  as.character()
+
+HR_levels <- HR_levels[c(1,3,2)]
+
+HR_levels
+
+HR_levels_colors <- as.character(merck_colors[c(10,8,3)])
+names(HR_levels_colors) <- HR_levels
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_tcga_hormone_receptor_status
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(Hormone_Receptor_Status)) 
+    
+  data_signature$Hormone_Receptor_Status <- factor(data_signature$Hormone_Receptor_Status, levels = HR_levels)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_tcga_hormone_receptor_status_all %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+  
+  pwc <- pwc %>% add_xy_position(x = "Hormone_Receptor_Status")
+    
+  p <- ggboxplot(data_signature, 
+            x = "Hormone_Receptor_Status", 
+            y = make.names(i),
+            fill = "Hormone_Receptor_Status") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(x = "Subtype",
+       y = "Ground State Signature Score",
+       fill = "Subtype",
+       #subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = " ") +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = HR_levels_colors[levels(factor(data_signature$Hormone_Receptor_Status))]) + 
+    theme(legend.position="right",
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+    
+  plot_list_endocrine_receptors[[i]][["Endocrine Receptor Subtype"]] <- p
+}
+
+DT::datatable(clin.test_tcga_hormone_receptor_status %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )  
+  
+```
+
+
+#### Signature scores, stratified by estrogen receptor IHC
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 17-plot_correlation_ER_TCGA}
+
+color_levels <- sig.scores_tcga_er_status$estrogen_receptor_status %>% unique %>% na.omit %>% as.character()
+# HR_levels <- HR_levels[c(1,3,2)]
+
+levels_colors <- as.character(merck_colors[c(2,5)])
+names(levels_colors) <- color_levels
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_tcga_er_status
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(estrogen_receptor_status)) 
+    
+  data_signature$estrogen_receptor_status <- factor(data_signature$estrogen_receptor_status)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_tcga_er_status %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+  
+  pwc <- pwc %>% add_xy_position(x = "estrogen_receptor_status")
+    
+  p <- ggboxplot(data_signature, 
+            x = "estrogen_receptor_status", 
+            y = make.names(i),
+            fill = "estrogen_receptor_status") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(x = "Estrogen Receptor IHC Status",
+       y = "Ground State Signature Score",
+       fill = "Subtype",
+       caption = " ") +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = levels_colors[levels(factor(data_signature$estrogen_receptor_status))]) + 
+    theme(legend.position="right",
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+    
+  plot_list_endocrine_receptors[[i]][["ER"]] <- p
+}
+
+DT::datatable(clin.test_tcga_er_status %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )  
+  
+```
+
+#### Signature scores, stratified by progesteron receptor IHC
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 18-plot_correlation_PR_TCGA}
+
+color_levels <- sig.scores_tcga_pr_status$progesteron_receptor_status %>% unique %>% na.omit %>% as.character()
+# HR_levels <- HR_levels[c(1,3,2)]
+
+levels_colors <- as.character(merck_colors[c(5,2)])
+names(levels_colors) <- color_levels
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_tcga_pr_status
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(progesteron_receptor_status)) 
+    
+  data_signature$progesteron_receptor_status <- factor(data_signature$progesteron_receptor_status)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_tcga_er_status %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+
+  pwc <- pwc %>% add_xy_position(x = "progesteron_receptor_status")
+    
+  p <- ggboxplot(data_signature, 
+            x = "progesteron_receptor_status", 
+            y = make.names(i),
+            fill = "progesteron_receptor_status") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(x = "Progesteron Receptor IHC Status",
+       y = "Ground State Signature Score",
+       fill = "Subtype",
+       caption = " ") +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = levels_colors[levels(factor(data_signature$progesteron_receptor_status))]) + 
+    theme(legend.position="right",
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+    
+  plot_list_endocrine_receptors[[i]][["PR"]] <- p
+}
+
+DT::datatable(clin.test_tcga_pr_status %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )  
+  
+```
+
+#### Signature scores, stratified by HER2 receptor IHC
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 19-plot_correlation_Her2_TCGA}
+
+color_levels <- sig.scores_tcga_her2_status$her2_receptor_status %>% unique %>% na.omit %>% as.character()
+color_levels <- color_levels[c(1,3,2)]
+
+levels_colors <- as.character(merck_colors[c(5,4, 2)])
+names(levels_colors) <- color_levels
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_tcga_her2_status
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(her2_receptor_status)) 
+    
+  data_signature$her2_receptor_status <- factor(data_signature$her2_receptor_status, levels = color_levels)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_tcga_er_status %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+
+  pwc <- pwc %>% add_xy_position(x = "her2_receptor_status")
+    
+  p <- ggboxplot(data_signature, 
+            x = "her2_receptor_status", 
+            y = make.names(i),
+            fill = "her2_receptor_status") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(x = "HER2 Receptor IHC Status",
+       y = "Ground State Signature Score",
+       fill = "Subtype",
+       caption = get_pwc_label(pwc)) +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = levels_colors[levels(factor(data_signature$her2_receptor_status))]) + 
+    theme(legend.position="right",
+          axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+    
+  plot_list_endocrine_receptors[[i]][["HER2"]] <- p
+}
+
+DT::datatable(clin.test_tcga_her2_status %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )  
+  
+```
+
+
+```{r 20-ground_state_signature_endocrine_TCGA, fig.height=4, fig.width=14}
+
+for(i in names(plot_list_endocrine_receptors)){
+  
+  plot_list <- cowplot::plot_grid(plotlist = plot_list_endocrine_receptors[[i]],
+                                  ncol = 4)
+  
+  # now add the title
+  title <- ggdraw() + 
+    draw_label(
+      paste("Signature in TCGA: ", i),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  print(plot_grid(
+    title, plot_list,
+    ncol = 1,
+    # rel_heights values control vertical title margins
+    rel_heights = c(0.05, 1)
+  ))
+  
+}
+
+```
+
+### Signature scores, stratified by PAM50 subtype
+
+#### TCGA
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 21-plot_correlation_PAM50_TCGA}
+
+plot_list_pam50 <- list()
+
+# gs.list.opt_notch
+# sig.scores_opt.notch
+# 
+# gs.list.published_notch
+# sig.scores_published.notch
+
+pam50_levels <- sig.scores_tcga_pam50$sub_pam50 %>% unique %>% na.omit %>% as.character()
+pam50_levels <- pam50_levels[c(4,5,2,3,1)]
+
+pam50_subtype_colors <- as.character(merck_colors[c(5,9,6,4,3)])
+names(pam50_subtype_colors) <- pam50_levels
+
+# plot our signature + all significant ones
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_tcga_pam50
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(sub_pam50)) 
+    
+  data_signature$sub_pam50 <- factor(data_signature$sub_pam50)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_tcga_pam50_all %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+  
+  
+  # dummy:
+  # pwc <- data_signature %>% 
+  #   wilcox_test(as.formula(paste(make.names(i), "sub_pam50", sep = " ~ ")), 
+  #               p.adjust.method = "holm") 
+
+  pwc <- pwc %>% add_xy_position(x = "sub_pam50")
+    
+  p <- ggboxplot(data_signature, 
+            x = "sub_pam50", 
+            y = make.names(i),
+            fill = "sub_pam50") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(title = "TCGA",
+       x = "Subtype",
+       y = "Signature Score",
+       fill = "Subtype",
+       #subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(pwc)) +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = pam50_subtype_colors[levels(factor(data_signature$sub_pam50))]) + 
+    theme(legend.position="right")
+    
+  plot_list_pam50[[i]][["TCGA"]] <- p
+}
+
+DT::datatable(clin.test_tcga_pam50 %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+
+```
+
+#### METABRIC
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+
+```{r 22-plot_correlation_PAM50_METABRIC}
+
+# Metabric: 
+
+pam50_levels <- sig.scores_metabric_pam50$pam50_22522925 %>% unique %>% na.omit %>% as.character()
+pam50_levels <- pam50_levels[c(5,4,2,3,1)]
+
+pam50_subtype_colors <- as.character(merck_colors[c(5,9,6,4,3)])
+names(pam50_subtype_colors) <- pam50_levels
+# plot our signature + all significant ones
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_metabric_pam50
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(pam50_22522925))
+    
+  data_signature$pam50_22522925 <- factor(data_signature$pam50_22522925)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_metabric_pam50_all %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+  
+  
+  # dummy:
+  # pwc <- data_signature %>% 
+  #   wilcox_test(as.formula(paste(make.names(i), "pam50_22522925", sep = " ~ ")), 
+  #             p.adjust.method = "holm") 
+
+  pwc <- pwc %>% add_xy_position(x = "pam50_22522925")
+    
+  p <- ggboxplot(data_signature, 
+            x = "pam50_22522925", 
+            y = make.names(i),
+            fill = "pam50_22522925") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(title = "METABRIC",
+       x = "Subtype",
+       y = "Signature Score",
+       fill = "Subtype",
+       #subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(pwc)) +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = pam50_subtype_colors[levels(factor(data_signature$pam50_22522925))]) + 
+    theme(legend.position="right")
+    
+  plot_list_pam50[[i]][["METABRIC"]] <- p
+}
+
+DT::datatable(clin.test_metabric_pam50 %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+
+```
+
+#### Oslo2
+
+**Statistics**
+
+wilcox test, p value adjusted by the method of holm
+Basal against baseline
+
+```{r 23-plot_correlation_PAM50_Oslo2}
+
+pam50_levels <- sig.scores_oslo2_pam50$pam50_28356166 %>% unique %>% na.omit %>% as.character()
+pam50_levels <- pam50_levels[c(3,5,1,4,2)]
+
+pam50_subtype_colors <- as.character(merck_colors[c(5,9,6,4,3)])
+names(pam50_subtype_colors) <- pam50_levels
+
+for(i in focus_signatures){
+
+  # calculate signature score
+  
+  data_signature <- sig.scores_oslo2_pam50
+  
+  data_signature <- data_signature %>%
+    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+    tidyr::pivot_wider(names_from = "id_geneset_name",
+                       values_from = "quant_signature") %>% 
+    dplyr::filter(!is.na(pam50_28356166))
+    
+  data_signature$pam50_28356166 <- factor(data_signature$pam50_28356166)
+
+  # Pairwise comparisons: Use the multiple testing adjusted calculations:
+  
+  pwc <- clin.test_oslo2_pam50_all %>% 
+    dplyr::filter(id_geneset_name %in% !!i) %>% 
+    dplyr::rename(`.y.` = "id_geneset_name")
+  
+  attributes(pwc)$args$data <- attributes(pwc)$args$data %>% 
+    dplyr::filter(id_geneset_name %in% !!i)
+  
+  # dummy:
+  # pwc <- data_signature %>% 
+  #   wilcox_test(as.formula(paste(make.names(i), "pam50_28356166", sep = " ~ ")), 
+  #             p.adjust.method = "holm") 
+
+  pwc <- pwc %>% add_xy_position(x = "pam50_28356166")
+    
+  p <- ggboxplot(data_signature, 
+            x = "pam50_28356166", 
+            y = make.names(i),
+            fill = "pam50_28356166") +
+  stat_pvalue_manual(pwc, hide.ns = TRUE) +
+  labs(title = "Oslo2",
+       x = "Subtype",
+       y = "Signature Score",
+       fill = "Subtype",
+       #subtitle = get_test_label(res.kruskal, detailed = TRUE),
+       caption = get_pwc_label(pwc)) +
+    # ylim(c(-1,1)) +
+    scale_fill_manual(values = pam50_subtype_colors[levels(factor(data_signature$pam50_28356166))]) + 
+    theme(legend.position="right")
+    
+  plot_list_pam50[[i]][["Oslo2"]] <- p
+}
+
+DT::datatable(clin.test_oslo2_pam50 %>% 
+                dplyr::select(-var1) %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+gc_results <- gc()
+```
+
+#### Plots
+
+```{r 24-ground_state_signature_pam50, fig.height=3, fig.width=12}
+
+for(i in names(plot_list_pam50)){
+  
+  plot_list <- cowplot::plot_grid(plotlist = plot_list_pam50[[i]],
+                                  ncol = 3)
+  
+  # now add the title
+  title <- ggdraw() + 
+    draw_label(
+      paste("Signature: ", i),
+      fontface = 'bold',
+      x = 0,
+      hjust = 0
+    ) +
+  theme(
+    # add margin on the left of the drawing canvas,
+    # so title is aligned with left edge of first plot
+    plot.margin = margin(0, 0, 0, 7)
+  )
+  
+  print(plot_grid(
+    title, plot_list,
+    ncol = 1,
+    # rel_heights values control vertical title margins
+    rel_heights = c(0.1, 1)
+  ))
+  
+}
+
+```
+
+## Mean signature scores Heatmap
+
+```{r 24b-ground_state_signature_pam50_heatmap}
+
+pam50_mean_data <- sig.scores_tcga_pam50 %>% 
+  dplyr::filter(id_geneset_name %in% !!focus_signatures,
+                !is.na(sub_pam50)) %>% 
+  dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+  dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(data_set = "TCGA",
+                name_column = paste0(sub_pam50, "_", data_set)) %>% 
+  bind_rows(sig.scores_metabric_pam50 %>% 
+              dplyr::rename(sub_pam50 = pam50_22522925) %>% 
+              dplyr::filter(id_geneset_name %in% !!focus_signatures,
+                            !is.na(sub_pam50)) %>% 
+              dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+              dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+              dplyr::ungroup() %>% 
+              dplyr::mutate(data_set = "METABRIC",
+                            name_column = paste0(sub_pam50, "_", data_set))) %>% 
+  bind_rows(sig.scores_oslo2_pam50 %>% 
+              dplyr::rename(sub_pam50 = pam50_28356166) %>% 
+              dplyr::filter(id_geneset_name %in% !!focus_signatures,
+                            !is.na(sub_pam50)) %>% 
+              dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+              dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+              dplyr::ungroup() %>% 
+              dplyr::mutate(data_set = "Oslo2",
+                            name_column = paste0(sub_pam50, "_", data_set)))
+
+pam50_mean_data_matrix <- as.matrix(pam50_mean_data %>% 
+                                      dplyr::select(-sub_pam50, -data_set) %>% 
+                                      tidyr::pivot_wider(names_from = name_column,
+                                                  values_from = mean_sig_score) %>% 
+                                      tibble::column_to_rownames("id_geneset_name"))
+
+order_test_sets <- unique(str_remove(colnames(pam50_mean_data_matrix), "^.+\\_"))
+
+colnames(pam50_mean_data_matrix) <- str_remove(colnames(pam50_mean_data_matrix), "\\_.+$")
+
+rownames(pam50_mean_data_matrix) <- str_replace_all(rownames(pam50_mean_data_matrix), "\\_", " ")
+
+col_fun = colorRamp2(c(-0.75,0,0.75), col_heatmap)
+
+ht <- ComplexHeatmap::Heatmap(pam50_mean_data_matrix,
+                        cluster_columns = FALSE,
+                        cluster_rows = FALSE,
+                        column_split = rep(order_test_sets, times = 1, each = 5),
+                        row_names_gp = gpar(fontsize = 8,
+                                            fontface = ifelse(grepl("Notch 20", rownames(pam50_mean_data_matrix)), "bold.italic", "plain")),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Mean Signature Score",
+                                                    direction = "horizontal",
+                                                    title_position = "lefttop"))
+
+draw(ht, heatmap_legend_side = "top")
+```
+
+
+## Mean signature scores Heatmap - all
+
+```{r 24c-ground_state_signature_pam50_heatmap, fig.width=6, fig.height=8}
+
+pam50_mean_data <- sig.scores_tcga_pam50 %>% 
+  dplyr::filter(#id_geneset_name %in% !!focus_signatures,
+                !is.na(sub_pam50)) %>% 
+  dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+  dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(data_set = "TCGA",
+                name_column = paste0(sub_pam50, "_", data_set)) %>% 
+  bind_rows(sig.scores_metabric_pam50 %>% 
+              dplyr::rename(sub_pam50 = pam50_22522925) %>% 
+              dplyr::filter(#id_geneset_name %in% !!focus_signatures,
+                            !is.na(sub_pam50)) %>% 
+              dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+              dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+              dplyr::ungroup() %>% 
+              dplyr::mutate(data_set = "METABRIC",
+                            name_column = paste0(sub_pam50, "_", data_set))) %>% 
+  bind_rows(sig.scores_oslo2_pam50 %>% 
+              dplyr::rename(sub_pam50 = pam50_28356166) %>% 
+              dplyr::filter(#id_geneset_name %in% !!focus_signatures,
+                            !is.na(sub_pam50)) %>% 
+              dplyr::group_by(id_geneset_name, sub_pam50) %>% 
+              dplyr::summarise(mean_sig_score = mean(quant_signature)) %>% 
+              dplyr::ungroup() %>% 
+              dplyr::mutate(data_set = "Oslo2",
+                            name_column = paste0(sub_pam50, "_", data_set)))
+
+pam50_mean_data_matrix <- as.matrix(pam50_mean_data %>% 
+                                      dplyr::select(-sub_pam50, -data_set) %>% 
+                                      tidyr::pivot_wider(names_from = name_column,
+                                                  values_from = mean_sig_score) %>% 
+                                      tibble::column_to_rownames("id_geneset_name"))
+
+order_test_sets <- unique(str_remove(colnames(pam50_mean_data_matrix), "^.+\\_"))
+
+colnames(pam50_mean_data_matrix) <- str_remove(colnames(pam50_mean_data_matrix), "\\_.+$")
+
+rownames(pam50_mean_data_matrix) <- str_replace_all(rownames(pam50_mean_data_matrix), "\\_", " ")
+
+col_fun = colorRamp2(c(-0.75,0,0.75), col_heatmap)
+
+ht <- ComplexHeatmap::Heatmap(pam50_mean_data_matrix,
+                        cluster_columns = FALSE,
+                        cluster_rows = FALSE,
+                        column_split = rep(order_test_sets, times = 1, each = 5),
+                        row_names_gp = gpar(fontsize = 8,
+                                            fontface = ifelse(grepl("Notch 20", rownames(pam50_mean_data_matrix)), "bold.italic", "plain")),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Mean Signature Score",
+                                                    direction = "horizontal",
+                                                    title_position = "lefttop"))
+
+draw(ht, heatmap_legend_side = "top")
+```
+
+## Coherence scores in PAM50 subtypes in the data sets
+
+### TCGA
+
+Coherence Score calculation on CPM TMM normalized data
+
+```{r}
+
+scale_this <- function(x){
+  (x - mean(x, na.rm=TRUE)) / sd(x, na.rm=TRUE)
+}
+
+gene_universe_signatures <- unique(unlist(c(gs.list.opt_notch, gs.list.published_notch)))
+
+## TMM normalized expression data - CPM
+
+id_xena_tcga <- "merck_tcga_rna_wtstmm_gexp_21q2_prod_kreis_2"
+
+expr_xena_tcga_tmm_cpm <- api$conn %>%
+  tbl(id_xena_tcga) %>%     
+  dplyr::filter(sample_status == "primary tumor",
+                id_gene_symbol %in% gene_universe_signatures,
+                id_tcga_cohort == "BRCA") %>% 
+  dplyr::select(id_tcga_participant_barcode, id_gene_symbol, quant_tmm_cpm) %>% 
+  dplyr::collect() %>% 
+  dplyr::group_by(id_tcga_participant_barcode, id_gene_symbol) %>% 
+  dplyr::summarise(quant_tmm_cpm = sum(quant_tmm_cpm)) %>% 
+  dplyr::ungroup()
+
+merck_tcga_rna_wtstmm_use <- expr_xena_tcga_tmm_cpm %>% 
+  dplyr::select(id_tcga_participant_barcode, id_gene_symbol, quant_tmm_cpm) %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled = scale_this(log2(quant_tmm_cpm+1))) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-quant_tmm_cpm) %>% 
+  dplyr::left_join(phe_tcga %>% 
+                     dplyr::select(id_tcga_participant_barcode, sub_pam50) %>% 
+                     dplyr::distinct(),
+                   by = "id_tcga_participant_barcode")
+
+cs_pam50 <- list()
+
+future::plan(strategy = "multicore", workers =20)
+
+for(i in na.omit(unique(merck_tcga_rna_wtstmm_use$sub_pam50))){
+  
+  cs_pam50[[i]] = furrr::future_map_dfr(c(gs.list.opt_notch, gs.list.published_notch), function(.x) {
+    
+    dt <- merck_tcga_rna_wtstmm_use %>% 
+        dplyr::filter(!is.na(sub_pam50),
+                      id_gene_symbol %in% !!.x,
+                      sub_pam50 == !!i) %>% 
+        tidyr::pivot_wider(names_from = "id_gene_symbol",
+                           values_from = "quant_scaled") %>% 
+          tibble::column_to_rownames("id_tcga_participant_barcode") %>% 
+        dplyr::select(-sub_pam50)
+    
+      cors = cor(dt)
+      data.frame(cs = mean(cors[lower.tri(cors)], na.rm = TRUE),
+                 size = ncol(dt))
+    
+    }, 
+    .id = "id_geneset_name",
+    .progress = TRUE)
+}
+
+cs_pam50 <- bind_rows(cs_pam50,
+                      .id = "PAM50")
+
+
+DT::datatable(cs_pam50 %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+
+```
+
+### METABRIC
+
+Coherence Score calculation on CPM TMM normalized data
+
+```{r}
+
+expr_cbioportal_metabric_use <- expr_cbioportal_metabric %>% 
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled = scale_this(quant_logmfi)) %>% 
+  dplyr::ungroup() %>% 
+  dplyr::select(-quant_logmfi) %>% 
+  dplyr::left_join(phe_cbioportal_metabric %>% 
+                     dplyr::select(id_patient_id, pam50_22522925) %>% 
+                     dplyr::distinct(),
+                   by = "id_patient_id")
+
+cs_metabric_pam50 <- list()
+
+future::plan(strategy = "multicore", workers =20)
+
+for(i in na.omit(unique(expr_cbioportal_metabric_use$pam50_22522925))){
+  
+  cs_metabric_pam50[[i]] = furrr::future_map_dfr(c(gs.list.opt_notch, gs.list.published_notch), function(.x) {
+    
+    dt <- expr_cbioportal_metabric_use %>% 
+        dplyr::filter(!is.na(pam50_22522925),
+                      id_gene_symbol %in% !!.x,
+                      pam50_22522925 == !!i) %>% 
+        tidyr::pivot_wider(names_from = "id_gene_symbol",
+                           values_from = "quant_scaled") %>% 
+          tibble::column_to_rownames("id_patient_id") %>% 
+        dplyr::select(-pam50_22522925)
+    
+      cors = cor(dt)
+      data.frame(cs = mean(cors[lower.tri(cors)], na.rm = TRUE),
+                 size = ncol(dt))
+    
+    }, 
+    .id = "id_geneset_name",
+    .progress = TRUE)
+}
+
+cs_metabric_pam50 <- bind_rows(cs_metabric_pam50,
+                      .id = "PAM50")
+
+
+DT::datatable(cs_metabric_pam50 %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+
+```
+
+
+### Oslo2
+
+Coherence Score calculation on CPM TMM normalized data
+
+```{r}
+
+expr_gse80999_oslo2_use <- expr_gse80999_oslo2 %>% 
+  dplyr::distinct() %>% 
+  dplyr::left_join(phe_gse80999_oslo2 %>% 
+                     dplyr::select(id_patient_id, pam50_28356166) %>% 
+                     dplyr::distinct(),
+                   by = "id_patient_id")
+
+cs_oslo2_pam50 <- list()
+
+future::plan(strategy = "multicore", workers =20)
+
+for(i in na.omit(unique(expr_gse80999_oslo2_use$pam50_28356166))){
+  
+  cs_oslo2_pam50[[i]] = furrr::future_map_dfr(c(gs.list.opt_notch, gs.list.published_notch), function(.x) {
+    
+    dt <- expr_gse80999_oslo2_use %>% 
+        dplyr::filter(!is.na(pam50_28356166),
+                      id_gene_symbol %in% !!.x,
+                      pam50_28356166 == !!i) %>% 
+        tidyr::pivot_wider(names_from = "id_gene_symbol",
+                           values_from = "quant_zlogmfi") %>% 
+          tibble::column_to_rownames("id_patient_id") %>% 
+        dplyr::select(-pam50_28356166, -id_geoid)
+    
+      cors = cor(dt)
+      data.frame(cs = mean(cors[lower.tri(cors)], na.rm = TRUE),
+                 size = ncol(dt))
+    
+    }, 
+    .id = "id_geneset_name",
+    .progress = TRUE)
+}
+
+cs_oslo2_pam50 <- bind_rows(cs_oslo2_pam50,
+                      .id = "PAM50")
+
+
+DT::datatable(cs_oslo2_pam50 %>% 
+                mutate_if(is.numeric, ~signif(., 2)),                       # just use significant numbers
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')        # definition of download buttons
+            )
+          )
+
+
+```
+
+# Overview over analysis variables and decision df
+
+Write Excel table with all statistical outcomes
+
+```{r 25-decision_df, fig.height=10, fig.width=9}
+
+# Signatures: load ALL tested signatures:
+
+base::load("../RData/Part2.RData")
+rm(cs_all_optimized,
+     cs_df_Oslo2,
+     cs_df_metabric,
+     cs_df_TCGA,
+     cs_q,
+     cpm_mat_full, 
+     tpm_mat_full, 
+     metabric_gene_expession_data_scaled_wide_full, 
+     Oslo2_gene_expession_data_wide_full)
+
+# get the right naming for the signature
+
+old_signature_name <- names(gene_set_list_opt_notch)[3]
+new_signature_name <- names(gs.list.opt_notch)[1]
+
+names(gene_set_list_opt_notch)[3] <- new_signature_name
+
+max_length <- max(unlist(lapply(gene_set_list_opt_notch, function(x) max(length(x)))))
+
+gs.list.opt_notch_excel <- list()
+
+for(i in names(gene_set_list_opt_notch)){
+  df_sig <- data.frame(dummy = gene_set_list_opt_notch[[i]])
+  
+  if(nrow(df_sig) != max_length){
+    df_sig[(nrow(df_sig)+1):max_length,] <- NA    
+  }
+  colnames(df_sig) <- i
+  gs.list.opt_notch_excel[[i]] <- df_sig
+
+}
+
+gs.list.opt_notch_excel <- bind_cols(gs.list.opt_notch_excel)
+
+xlsx::write.xlsx(gs.list.opt_notch_excel,
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Study Signatures",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = FALSE,
+  showNA = FALSE)
+
+# gs.list.published_notch
+
+max_length <- max(unlist(lapply(gs.list.published_notch, function(x) max(length(x)))))
+
+gs.list.published_notch_excel <- list()
+
+for(i in names(gs.list.published_notch)){
+  df_sig <- data.frame(dummy = gs.list.published_notch[[i]])
+  
+  if(nrow(df_sig) != max_length){
+    df_sig[(nrow(df_sig)+1):max_length,] <- NA    
+  }
+  colnames(df_sig) <- i
+  gs.list.published_notch_excel[[i]] <- df_sig
+
+}
+
+gs.list.published_notch_excel <- bind_cols(gs.list.published_notch_excel)
+
+xlsx::write.xlsx(gs.list.published_notch_excel,
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Published Signatures",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+###### ----- Coherence Scores - Pan-BRCA
+
+# if significant: 1, otherwise 0, p.adjust over all, not only for the selected signature -> need to recaluculate adj.p for all:
+
+all_coherence_scores <- cs.gs.opt_notch %>% 
+  dplyr::filter(id_geneset_name == !!old_signature_name) %>%  # still original name from discovery approach (see Part 2)
+  dplyr::mutate(id_geneset_name = !!new_signature_name) %>% 
+    dplyr::select(id_geneset_name, n_geneset = signature_size, cs_tcga = cs_mean_TCGA, cs_metabric = cs_mean_metabric, cs_oslo2 = cs_mean_Oslo2, 
+                  p_emp_tcga = emp_p_value_TCGA, p_emp_metabric = emp_p_value_metabric, p_emp_oslo2 = emp_p_value_Oslo2) %>% 
+    as.data.frame() %>% 
+  bind_rows(cs.gs.published_notch %>% 
+  dplyr::select(id_geneset_name, n_geneset, cs_tcga, cs_metabric, cs_oslo2, 
+                p_emp_tcga, p_emp_metabric, p_emp_oslo2) %>% 
+    as.data.frame())
+
+
+# set P value for the Notch 20-Gene Signature in TCGA to NA, as the signature was optimized using this data set 
+
+all_coherence_scores$p_emp_tcga[all_coherence_scores$id_geneset_name == new_signature_name] <- NA
+
+## add adjusted_p-values
+
+all_coherence_scores$p.adj_emp_tcga <- p.adjust(all_coherence_scores$p_emp_tcga, method = "fdr")
+all_coherence_scores$p.adj_emp_metabric <- p.adjust(all_coherence_scores$p_emp_metabric, method = "fdr")
+all_coherence_scores$p.adj_emp_oslo2 <- p.adjust(all_coherence_scores$p_emp_oslo2, method = "fdr")
+
+decision_df_cs <- data.frame(id_geneset_name = all_coherence_scores$id_geneset_name,
+                             CS_TCGA = ifelse(all_coherence_scores$p.adj_emp_tcga < 0.05, 1, 0),           
+                             CS_METABRIC = ifelse(all_coherence_scores$p.adj_emp_metabric < 0.05, 1, 0),
+                             CS_Oslo2 = ifelse(all_coherence_scores$p.adj_emp_oslo2 < 0.05, 1, 0))
+
+
+xlsx::write.xlsx(all_coherence_scores,
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Study Coherence Scores",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+###### ----- Coherence Scores - PAM50 stratified
+
+cs_pam50_all <- cs_pam50 %>% 
+  dplyr::select(-size) %>% 
+  dplyr::rename(cs_TCGA = cs) %>% 
+  dplyr::left_join(cs_metabric_pam50 %>% 
+                     dplyr::select(-size) %>% 
+                     dplyr::rename(cs_METABRIC = cs)) %>% 
+  dplyr::left_join(cs_oslo2_pam50 %>% 
+                     dplyr::select(-size) %>% 
+                     dplyr::rename(cs_Oslo2 = cs))
+
+xlsx::write.xlsx(cs_pam50_all,
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Study CS - PAM50",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+###### ----- GSEA in training data set
+# only for published signatures, as the other signatures are trained on this data set, therefore, these would be artificially high in this data set
+
+xlsx::write.xlsx(Training_gsea_summary %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "GSEA - Training",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+###### ----- GSEA in validation data set
+
+# if significant: 1, otherwise 0, p.adjust over all, not only for the selected signature -> no need to recaluculate adj.p:
+
+df_gsea_validation <- gsea_Jagged1_DAPT@result %>% 
+  dplyr::select(ID, NES, p.adjust) %>% 
+  dplyr::rename(NES_all = NES,
+                p.adjust_all = p.adjust) %>% 
+  dplyr::left_join(gsea_Jagged1_DAPT_8h@result %>% 
+                     dplyr::select(ID, NES, p.adjust) %>% 
+                     dplyr::rename(NES_8h = NES,
+                                   p.adjust_8h = p.adjust)) %>% 
+  dplyr::left_join(gsea_Jagged1_DAPT_72h@result %>% 
+                     dplyr::select(ID, NES, p.adjust) %>% 
+                     dplyr::rename(NES_72h = NES,
+                                   p.adjust_72h = p.adjust)) %>% 
+  dplyr::mutate(across(where(is.numeric), tidyr::replace_na, 1)) %>% 
+  dplyr::select(ID, NES_all, NES_8h, NES_72h, p.adjust_all, p.adjust_8h, p.adjust_72h)
+
+decision_df_gsea_validation <- data.frame(id_geneset_name = df_gsea_validation$ID,
+                                          GSEA_validation = ifelse(df_gsea_validation$p.adjust_all < 0.05, 1, 0),
+                                          GSEA_validation_8h = ifelse(df_gsea_validation$p.adjust_8h < 0.05, 1, 0),
+                                          GSEA_validation_72h = ifelse(df_gsea_validation$p.adjust_72h < 0.05, 1, 0))
+
+xlsx::write.xlsx(df_gsea_validation,
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "GSEA - Validation",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+##### ----- Significant discrimination of BASAL subtype vs other subtypes in validation cohort in the ground state (tested for alternative = greater, so only the right direction is set to be significant)
+
+# if significant: 1, otherwise 0, p.adjust over all
+
+decision_df_pwc_quant_validation <- data.frame(id_geneset_name = pwc_quant.signatures$id_geneset_name,
+                                          `Ground_state_Basal-like_subtype` = ifelse(pwc_quant.signatures$p.adj < 0.05 , 1, 0),
+                                          check.names = FALSE)
+
+xlsx::write.xlsx(pwc_quant.signatures %>%
+  dplyr::mutate(group2 = "rest") %>% 
+  dplyr::select(id_geneset_name, group1, group2, p.adj) %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Validation - PAM50 GS only basal",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(pwc_quant.signatures_all %>% 
+  dplyr::select(id_geneset_name, group1, group2, p.adj) %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Validation - PAM50 GS",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+##### ----- Discrimination of Notch on / Notch off in validation cohort in BASAL-like subtype
+
+pwc_delta.signatures_use <- pwc_delta.signatures %>% 
+  dplyr::select(id_geneset_name, condition_subtype, p.adj) %>% 
+  tidyr::pivot_wider(names_from = "condition_subtype",
+                     values_from = "p.adj")
+
+# make.names(id_geneset_name) -> need to reverse it manually
+
+pwc_delta.signatures_use$id_geneset_name[pwc_delta.signatures_use$id_geneset_name == "Notch.20.Gene.Signature"] <- "Notch 20-Gene Signature"
+
+decision_df_pwc_validation <- data.frame(id_geneset_name = pwc_delta.signatures_use$id_geneset_name,
+                                          `Treatment_difference_in_Basal-like_subtype` = ifelse(pwc_delta.signatures_use$basal < 0.05, 1, 0),
+                                         check.names = FALSE)
+
+xlsx::write.xlsx(pwc_delta.signatures %>% 
+                   dplyr::select(-c(y.position, groups, x, xmin, xmax, .y.)) %>% 
+                   as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Validation - PAM50 delta basal",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(pwc_delta.signatures_all %>% 
+                   dplyr::select(-c(y.position, groups, x, xmin, xmax, .y.)) %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Validation - PAM50 delta",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+
+# Clinical Biomarker
+# 
+# cor > 0.5, p.adj < 0.05 = 0, else 1
+
+### --- Immunescore
+
+clin.cor_tcga_immune <- clin.cor_tcga %>% 
+  dplyr::filter(var2 == "immunescore_24113773")
+clin.cor_metabric_immune <- clin.cor_metabric %>% 
+  dplyr::filter(var2 == "immunescore_24113773")
+clin.cor_oslo2_immune <- clin.cor_oslo2 %>% 
+  dplyr::filter(var2 == "immunescore_24113773")
+
+decision_df_immune_validation <- data.frame(id_geneset_name = clin.cor_tcga_immune$id_geneset_name,
+                                          Immunescore_TCGA = ifelse(clin.cor_tcga_immune$cor > 0.5 &
+                                                                             clin.cor_tcga_immune$p.adj < 0.05 , 0, 1),
+                                          Immunescore_METABRIC = ifelse(clin.cor_metabric_immune$cor > 0.5 &
+                                                                             clin.cor_metabric_immune$p.adj < 0.05 , 0, 1),
+                                          Immunescore_Oslo2 = ifelse(clin.cor_oslo2_immune$cor > 0.5 &
+                                                                             clin.cor_oslo2_immune$p.adj < 0.05 , 0, 1)
+                                          )
+
+### --- Stromalscore
+
+clin.cor_tcga_stromal <- clin.cor_tcga %>% 
+  dplyr::filter(var2 == "stromalscore_24113773")
+clin.cor_metabric_stromal <- clin.cor_metabric %>% 
+  dplyr::filter(var2 == "stromalscore_24113773")
+clin.cor_oslo2_stromal <- clin.cor_oslo2 %>% 
+  dplyr::filter(var2 == "stromalscore_24113773")
+
+decision_df_stromal_validation <- data.frame(id_geneset_name = clin.cor_tcga_stromal$id_geneset_name,
+                                          Stromalscore_TCGA = ifelse(clin.cor_tcga_stromal$cor > 0.5 &
+                                                                             clin.cor_tcga_stromal$p.adj < 0.05 , 0, 1),
+                                          Stromalscore_METABRIC = ifelse(clin.cor_metabric_stromal$cor > 0.5 &
+                                                                             clin.cor_metabric_stromal$p.adj < 0.05 , 0, 1),
+                                          Stromalscore_Oslo2 = ifelse(clin.cor_oslo2_stromal$cor > 0.5 &
+                                                                             clin.cor_oslo2_stromal$p.adj < 0.05 , 0, 1)
+                                          )
+
+xlsx::write.xlsx(clin.cor_tcga %>% 
+                   dplyr::select(-var1, -statistic) %>% 
+                   as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test TCGA - Correlations",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.cor_metabric %>% 
+                   dplyr::select(-var1, -statistic) %>% 
+                   as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test METABRIC - Correlations",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.cor_oslo2 %>% 
+                   dplyr::select(-var1, -statistic) %>% 
+                   as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test Oslo2 - Correlations",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+# Hormone Receptor status / PAM50
+# 
+# p.adj < 0.05 = 0, else 1
+
+use_clin.test_pam50 <- clin.test_tcga_hormone_receptor_status %>% 
+  dplyr::select(id_geneset_name, p.adj_HR_tcga = p.adj) %>% 
+  dplyr::left_join(clin.test_tcga_pam50 %>% 
+                     dplyr::select(id_geneset_name, p.adj_tcga = p.adj)) %>% 
+  dplyr::left_join(clin.test_metabric_pam50 %>% 
+                     dplyr::select(id_geneset_name, p.adj_metabric = p.adj)) %>% 
+  dplyr::left_join(clin.test_oslo2_pam50 %>% 
+                     dplyr::select(id_geneset_name, p.adj_oslo2 = p.adj))
+
+decision_df_clinical_pam50 <- data.frame(id_geneset_name = use_clin.test_pam50$id_geneset_name,
+                                          PAM50_TCGA = ifelse(use_clin.test_pam50$p.adj_tcga < 0.05 , 1, 0),
+                                          PAM50_METABRIC = ifelse(use_clin.test_pam50$p.adj_metabric < 0.05 , 1, 0),
+                                          PAM50_Oslo2 = ifelse(use_clin.test_pam50$p.adj_oslo2 < 0.05 , 1, 0))
+
+xlsx::write.xlsx(clin.test_tcga_pam50 %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test TCGA - PAM50",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.test_metabric_pam50 %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test METABRIC - PAM50",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.test_oslo2_pam50 %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test Oslo2 - PAM50",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+### --- Rest of clinical variables tested, not used for classification
+
+xlsx::write.xlsx(clin.test_tcga %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test TCGA - Covariates",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.test_metabric %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test METABRIC - Covariates",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+xlsx::write.xlsx(clin.test_oslo2 %>% 
+    as.data.frame(),
+  file = "../results/Signatures_Statistical_Analysis.xlsx",
+  sheetName = "Test Oslo2 - Covariates",
+  col.names = TRUE,
+  row.names = FALSE,
+  append = TRUE,
+  showNA = FALSE)
+
+## Rankings:
+
+decision_df <- decision_df_cs %>%
+  dplyr::left_join(decision_df_gsea_validation) %>%
+  dplyr::left_join(decision_df_pwc_quant_validation) %>%
+  dplyr::left_join(decision_df_pwc_validation) %>%
+  dplyr::left_join(decision_df_immune_validation) %>%
+  dplyr::left_join(decision_df_stromal_validation) %>%
+  dplyr::left_join(decision_df_clinical_pam50)
+
+xlsx::write.xlsx(decision_df,
+  file = "../results/decision_df.xlsx",
+  sheetName = "Decision DF",
+  col.names = TRUE,
+  row.names = FALSE,
+  showNA = FALSE)
+
+number_significant <- decision_df %>% 
+                                column_to_rownames("id_geneset_name") %>% 
+  rowSums(na.rm = TRUE)
+
+row_order <- match(names(sort(number_significant, decreasing = TRUE)), decision_df$id_geneset_name)
+signif_col = colorRamp2(c(min(number_significant), max(number_significant)), merck_colors[c(5,6)])
+
+row_ha = ComplexHeatmap::rowAnnotation(`Number\nSignificant` = number_significant,
+                                       col = list(`Number\nSignificant` = signif_col),
+                                       annotation_name_side = "top")
+
+heatmap_df <- decision_df %>% 
+  tidyr::pivot_longer(-1,
+                      names_to = "to",
+                      values_to = "val") %>% 
+  dplyr::mutate(val = ifelse(val == 1, "yes", "no")) %>% 
+  tidyr::pivot_wider(values_from = "val",
+                     names_from = "to") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% 
+  as.matrix()
+
+colnames(heatmap_df) <- str_replace_all(colnames(heatmap_df), "\\_", " ")
+
+# data basis:
+
+test_cohort <- ifelse(grepl("TCGA", colnames(heatmap_df)), "TCGA",
+       ifelse(grepl("METABRIC", colnames(heatmap_df)), "METABRIC",
+              ifelse(grepl("Oslo2", colnames(heatmap_df)), "Oslo2",
+                     "Validation")))
+
+test_cohort_col <- merck_colors[(1+3):(length(unique(test_cohort))+3)]
+names(test_cohort_col) <- unique(test_cohort)
+
+col_ha = ComplexHeatmap::columnAnnotation(`Test Cohort` = test_cohort,
+                                          col = list(`Test Cohort` = test_cohort_col),
+                                          annotation_name_side = "right")
+
+
+ht <- ComplexHeatmap::Heatmap(heatmap_df,
+                              column_title = "Signature Significance",
+                        row_order = row_order,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = c("no" = merck_colors[1], "yes" = merck_colors[2]),
+                        right_annotation = row_ha,
+                        bottom_annotation = col_ha,
+                        heatmap_legend_param = list(title = "Significant"),
+                        row_names_max_width = max_text_width(
+                          decision_df$id_geneset_name, 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht, merge_legend = TRUE)
+```
+
+```{r 25b-decision_df_focus, fig.height=5, fig.width=7}
+
+number_significant <- decision_df %>% 
+  dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+                                column_to_rownames("id_geneset_name") %>% 
+  rowSums(na.rm = TRUE)
+
+row_order <- match(names(sort(number_significant, decreasing = TRUE)), (decision_df %>% 
+                                                                          dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+                                                                          dplyr::pull(id_geneset_name)))
+
+signif_col = colorRamp2(c(min(number_significant), max(number_significant)), merck_colors[c(5,6)])
+
+row_ha = ComplexHeatmap::rowAnnotation(`Number\nSignificant` = number_significant,
+                                       col = list(`Number\nSignificant` = signif_col),
+                                       annotation_name_side = "top")
+
+heatmap_df <- decision_df %>% 
+  dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+  tidyr::pivot_longer(-1,
+                      names_to = "to",
+                      values_to = "val") %>% 
+  dplyr::mutate(val = ifelse(val == 1, "yes", "no")) %>% 
+  tidyr::pivot_wider(values_from = "val",
+                     names_from = "to") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% 
+  as.matrix()
+
+colnames(heatmap_df) <- str_replace_all(colnames(heatmap_df), "\\_", " ")
+
+# data basis:
+
+test_cohort <- ifelse(grepl("TCGA", colnames(heatmap_df)), "TCGA",
+       ifelse(grepl("METABRIC", colnames(heatmap_df)), "METABRIC",
+              ifelse(grepl("Oslo2", colnames(heatmap_df)), "Oslo2",
+                     "Validation")))
+
+test_cohort_col <- merck_colors[(1+3):(length(unique(test_cohort))+3)]
+names(test_cohort_col) <- unique(test_cohort)
+
+col_ha = ComplexHeatmap::columnAnnotation(`Test Cohort` = test_cohort,
+                                          col = list(`Test Cohort` = test_cohort_col),
+                                          annotation_name_side = "right")
+
+
+ht <- ComplexHeatmap::Heatmap(heatmap_df,
+                              column_title = "Signature Significance",
+                        row_order = row_order,
+                        cluster_rows = FALSE,
+                        cluster_columns = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        column_names_gp = gpar(fontsize = 8),
+                        col = c("no" = merck_colors[1], "yes" = merck_colors[2]),
+                        right_annotation = row_ha,
+                        bottom_annotation = col_ha,
+                        heatmap_legend_param = list(title = "Significant"),
+                        row_names_max_width = max_text_width(
+                          decision_df %>% 
+                            dplyr::filter(id_geneset_name %in% !!focus_signatures) %>% 
+                            pull(id_geneset_name), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht, merge_legend = TRUE)
+```
+
+
+# Signature Heatmap
+
+## TCGA
+
+```{r 26-Signature_Heatmap_TCGA, fig.width=18, fig.height=10, dev='png', dpi=150}
+tcga_sig <- sig.scores_tcga_opt.notch %>% 
+  dplyr::select(id_geneset_name, patient_id, quant_signature, sub_pam50, immunescore_24113773, stromalscore_24113773) %>% 
+  dplyr::mutate(type = "Study") %>% 
+  bind_rows(sig.scores_tcga_published.notch %>% 
+              dplyr::select(id_geneset_name, patient_id, quant_signature, sub_pam50, immunescore_24113773, stromalscore_24113773) %>% 
+              dplyr::mutate(type = "Published")) %>% 
+  dplyr::distinct()
+
+tcga_sig_mat <- tidyr::pivot_wider(tcga_sig %>% 
+                                     dplyr::select(-type, -sub_pam50, -immunescore_24113773, -stromalscore_24113773),
+                                   names_from = "id_geneset_name",
+                                   values_from = "quant_signature") %>% 
+  as.data.frame() %>% 
+  column_to_rownames("patient_id") %>% 
+  as.matrix %>% 
+  t()
+
+Type <- tcga_sig %>% 
+  dplyr::select(id_geneset_name, type) %>% 
+  dplyr::distinct() %>% 
+  pull(type)
+
+Type_col <- merck_colors[c(3,4)]
+names(Type_col) <- unique(Type)
+
+pam50_subtype_tcga <- tcga_sig %>% 
+    dplyr::select(patient_id, sub_pam50) %>% 
+  distinct() %>% 
+  pull(sub_pam50)
+
+pam50_subtype_tcga <- replace_na(pam50_subtype_tcga, "unknown")
+
+pam50_subtype_colors2 <- c(pam50_subtype_colors, unknown = "lightgrey")
+
+pam50_subtype_tcga_col <- pam50_subtype_colors2[unique(pam50_subtype_tcga)]
+
+immunescore_tcga <- tcga_sig %>% 
+    dplyr::select(patient_id, immunescore_24113773) %>% 
+  distinct() %>% 
+  pull(immunescore_24113773) %>% 
+  scale()
+
+stromal_tcga <- tcga_sig %>% 
+    dplyr::select(patient_id, stromalscore_24113773) %>% 
+  distinct() %>% 
+  pull(stromalscore_24113773) %>% 
+  scale()
+
+immunescore_tcga_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[2]))
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_tcga,
+                                          `Immune score` = immunescore_tcga,
+                                          `Stromal score` = stromal_tcga,
+                                          col = list(PAM50 = pam50_subtype_tcga_col,
+                                                     `Immune score` = immunescore_tcga_col,
+                                                     `Stromal score` = immunescore_tcga_col),
+                                          annotation_name_side = "left")
+
+row_ha = ComplexHeatmap::rowAnnotation(`Signature\nType` = Type,
+                                       col = list(`Signature\nType` = Type_col),
+                                       annotation_name_side = "top")
+
+col_fun = colorRamp2(c(-2,0,2), col_heatmap)
+
+column_split = pam50_subtype_tcga
+
+ht <- ComplexHeatmap::Heatmap(tcga_sig_mat,
+                              column_title = "Notch Signature Scores in TCGA",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        # column_order = order(immunescore_tcga),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+ht <- ComplexHeatmap::Heatmap(tcga_sig_mat,
+                              column_title = "Notch Signature Scores in TCGA\nOrdered by immune score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(immunescore_tcga),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(tcga_sig_mat,
+                              column_title = "Notch Signature Scores in TCGA\nOrdered by stromal score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(stromal_tcga),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+# Only sign_interest
+
+sign_interest <- "Notch 20-Gene Signature"
+sign_scores <- tcga_sig_mat[rownames(tcga_sig_mat) == sign_interest,]
+
+tcga_sig_mat_sel <- tcga_sig_mat[!grepl("sign",rownames(tcga_sig_mat)),]
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_tcga,
+                                          `Notch Signature` = sign_scores,
+                                          col = list(PAM50 = pam50_subtype_tcga_col,
+                                                     `Notch Signature` = immunescore_tcga_col),
+                                          annotation_name_side = "left")
+
+correlation_all <- cor(t(tcga_sig_mat_sel), sign_scores) %>% 
+  as.data.frame() %>% 
+  arrange(desc(V1))
+
+correlation_tcga <- correlation_all$V1
+correlation_tcga_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[6]))
+
+row_ha = ComplexHeatmap::rowAnnotation(r = correlation_tcga,
+                                       col = list(r = correlation_tcga_col),
+                                       annotation_name_side = "top")
+
+ht <- ComplexHeatmap::Heatmap(tcga_sig_mat_sel,
+                              column_title = "Notch Signature Scores in TCGA",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        #column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_tcga),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(tcga_sig_mat_sel,
+                              column_title = "Notch Signature Scores in TCGA\nOrdered by Signature Score",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_tcga),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+```
+
+## METABRIC
+
+```{r 27-Signature_Heatmap_METABRIC, fig.width=18, fig.height=10, dev='png', dpi=150}
+
+metabric_sig <- sig.scores_metabric_opt.notch %>% 
+  dplyr::select(id_geneset_name, patient_id, quant_signature, pam50_22522925, immunescore_24113773, stromalscore_24113773) %>% 
+  dplyr::mutate(type = "Study") %>% 
+  bind_rows(sig.scores_metabric_published.notch %>% 
+              dplyr::select(id_geneset_name, patient_id, quant_signature, pam50_22522925, immunescore_24113773, stromalscore_24113773) %>% 
+              dplyr::mutate(type = "Published"))
+
+metabric_sig_mat <- tidyr::pivot_wider(metabric_sig %>% 
+                                     dplyr::select(-type, -pam50_22522925, -immunescore_24113773, -stromalscore_24113773),
+                                   names_from = "id_geneset_name",
+                                   values_from = "quant_signature") %>% 
+  as.data.frame() %>% 
+  column_to_rownames("patient_id") %>% 
+  as.matrix %>% 
+  t()
+
+Type <- metabric_sig %>% 
+  dplyr::select(id_geneset_name, type) %>% 
+  dplyr::distinct() %>% 
+  pull(type)
+
+Type_col <- merck_colors[c(3,4)]
+names(Type_col) <- unique(Type)
+
+pam50_subtype_metabric <- metabric_sig %>% 
+    dplyr::select(patient_id, pam50_22522925) %>% 
+  distinct() %>% 
+  pull(pam50_22522925)
+
+pam50_subtype_metabric <- replace_na(pam50_subtype_metabric, "unknown")
+
+pam50_subtype_colors2 <- c(pam50_subtype_colors, unknown = "lightgrey")
+
+pam50_subtype_metabric_col <- pam50_subtype_colors2[unique(pam50_subtype_metabric)]
+
+immunescore_metabric <- metabric_sig %>% 
+    dplyr::select(patient_id, immunescore_24113773) %>% 
+  distinct() %>% 
+  pull(immunescore_24113773) %>% 
+  scale()
+
+stromal_metabric <- metabric_sig %>% 
+    dplyr::select(patient_id, stromalscore_24113773) %>% 
+  distinct() %>% 
+  pull(stromalscore_24113773) %>% 
+  scale()
+
+immunescore_metabric_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[2]))
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_metabric,
+                                          `Immune score` = immunescore_metabric,
+                                          `Stromal score` = stromal_metabric,
+                                          col = list(PAM50 = pam50_subtype_metabric_col,
+                                                     `Immune score` = immunescore_metabric_col,
+                                                     `Stromal score` = immunescore_metabric_col),
+                                          annotation_name_side = "left")
+
+row_ha = ComplexHeatmap::rowAnnotation(`Signature\nType` = Type,
+                                       col = list(`Signature\nType` = Type_col),
+                                       annotation_name_side = "top")
+
+col_fun = colorRamp2(c(-2,0,2), col_heatmap)
+
+column_split = pam50_subtype_metabric
+
+
+ht <- ComplexHeatmap::Heatmap(metabric_sig_mat,
+                              column_title = "Notch Signature Scores in METABRIC",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        # column_order = order(immunescore_metabric),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(metabric_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+ht <- ComplexHeatmap::Heatmap(metabric_sig_mat,
+                              column_title = "Notch Signature Scores in METABRIC\nOrdered by Immune score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(immunescore_metabric),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(metabric_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(metabric_sig_mat,
+                              column_title = "Notch Signature Scores in METABRIC\nOrdered by Stromal score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(stromal_metabric),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(metabric_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+# Only sign_interest
+
+sign_interest <- "Notch 20-Gene Signature"
+sign_scores <- metabric_sig_mat[rownames(metabric_sig_mat) == sign_interest,]
+
+metabric_sig_mat_sel <- metabric_sig_mat[!grepl("sign",rownames(metabric_sig_mat)),]
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_metabric,
+                                          `Notch Signature` = sign_scores,
+                                          col = list(PAM50 = pam50_subtype_metabric_col,
+                                                     `Notch Signature` = immunescore_metabric_col),
+                                          annotation_name_side = "left")
+
+correlation_all <- cor(t(metabric_sig_mat_sel), sign_scores) %>% 
+  as.data.frame() %>% 
+  arrange(desc(V1))
+
+correlation_metabric <- correlation_all$V1
+correlation_metabric_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[6]))
+
+row_ha = ComplexHeatmap::rowAnnotation(r = correlation_metabric,
+                                       col = list(r = correlation_metabric_col),
+                                       annotation_name_side = "top")
+
+ht <- ComplexHeatmap::Heatmap(metabric_sig_mat_sel,
+                              column_title = "Notch Signature Scores in METABRIC",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        #column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_metabric),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(metabric_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(metabric_sig_mat_sel,
+                              column_title = "Notch Signature Scores in METABRIC\nOrdered by Signature Score",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_metabric),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(metabric_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+```
+
+## Oslo2
+
+```{r 28-Signature_Heatmap_Oslo2, fig.width=18, fig.height=10, dev='png', dpi=150}
+oslo2_sig <- sig.scores_oslo2_opt.notch %>% 
+  dplyr::select(id_geneset_name, patient_id, quant_signature, pam50_28356166, immunescore_24113773, stromalscore_24113773) %>% 
+  dplyr::mutate(type = "Study") %>% 
+  bind_rows(sig.scores_oslo2_published.notch %>% 
+              dplyr::select(id_geneset_name, patient_id, quant_signature, pam50_28356166, immunescore_24113773, stromalscore_24113773) %>% 
+              dplyr::mutate(type = "Published"))
+
+
+oslo2_sig_mat <- tidyr::pivot_wider(oslo2_sig %>% 
+                                     dplyr::select(-type, -pam50_28356166, -immunescore_24113773, -stromalscore_24113773),
+                                   names_from = "id_geneset_name",
+                                   values_from = "quant_signature") %>% 
+  as.data.frame() %>% 
+  column_to_rownames("patient_id") %>% 
+  as.matrix %>% 
+  t()
+
+Type <- oslo2_sig %>% 
+  dplyr::select(id_geneset_name, type) %>% 
+  dplyr::distinct() %>% 
+  pull(type)
+
+Type_col <- merck_colors[c(3,4)]
+names(Type_col) <- unique(Type)
+
+pam50_subtype_tcga <- oslo2_sig %>% 
+    dplyr::select(patient_id, pam50_28356166) %>% 
+  distinct() %>% 
+  pull(pam50_28356166)
+
+pam50_subtype_oslo2 <- replace_na(pam50_subtype_tcga, "unknown")
+
+pam50_subtype_colors2 <- c(pam50_subtype_colors, unknown = "lightgrey")
+
+pam50_subtype_oslo2_col <- pam50_subtype_colors2[unique(pam50_subtype_oslo2)]
+
+immunescore_oslo2 <- oslo2_sig %>% 
+    dplyr::select(patient_id, immunescore_24113773) %>% 
+  distinct() %>% 
+  pull(immunescore_24113773) %>% 
+  scale()
+
+stromal_oslo2 <- oslo2_sig %>% 
+    dplyr::select(patient_id, stromalscore_24113773) %>% 
+  distinct() %>% 
+  pull(stromalscore_24113773) %>% 
+  scale()
+
+immunescore_oslo2_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[2]))
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_oslo2,
+                                          `Immune score` = immunescore_oslo2,
+                                          `Stromal score` = stromal_oslo2,
+                                          col = list(PAM50 = pam50_subtype_oslo2_col,
+                                                     `Immune score` = immunescore_oslo2_col,
+                                                     `Stromal score` = immunescore_oslo2_col),
+                                          annotation_name_side = "left")
+
+row_ha = ComplexHeatmap::rowAnnotation(`Signature\nType` = Type,
+                                       col = list(`Signature\nType` = Type_col),
+                                       annotation_name_side = "top")
+
+col_fun = colorRamp2(c(-2,0,2), col_heatmap)
+
+column_split = pam50_subtype_oslo2
+
+
+ht <- ComplexHeatmap::Heatmap(oslo2_sig_mat,
+                              column_title = "Notch Signature Scores in Oslo2",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        # column_order = order(immunescore_tcga),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+ht <- ComplexHeatmap::Heatmap(oslo2_sig_mat,
+                              column_title = "Notch Signature Scores in Oslo2\nOrdered by Immune score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(immunescore_oslo2),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(oslo2_sig_mat,
+                              column_title = "Notch Signature Scores in Oslo2\nOrdered by Stromal score",
+                        # clustering_distance_columns = "manhattan",
+                        # clustering_method_columns = "ward.D2",
+                        column_order = order(stromal_oslo2),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(tcga_sig_mat), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+
+# Only sign_interest
+
+sign_interest <- "Notch 20-Gene Signature"
+sign_scores <- oslo2_sig_mat[rownames(oslo2_sig_mat) == sign_interest,]
+
+oslo2_sig_mat_sel <- oslo2_sig_mat[!grepl("sign",rownames(oslo2_sig_mat)),]
+
+col_ha = ComplexHeatmap::columnAnnotation(PAM50 = pam50_subtype_oslo2,
+                                          `Notch Signature` = sign_scores,
+                                          col = list(PAM50 = pam50_subtype_oslo2_col,
+                                                     `Notch Signature` = immunescore_oslo2_col),
+                                          annotation_name_side = "left")
+
+correlation_all <- cor(t(oslo2_sig_mat_sel), sign_scores) %>% 
+  as.data.frame() %>% 
+  arrange(desc(V1))
+
+correlation_oslo2 <- correlation_all$V1
+correlation_oslo2_col = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[6]))
+
+row_ha = ComplexHeatmap::rowAnnotation(r = correlation_oslo2,
+                                       col = list(r = correlation_oslo2_col),
+                                       annotation_name_side = "top")
+
+ht <- ComplexHeatmap::Heatmap(oslo2_sig_mat_sel,
+                              column_title = "Notch Signature Scores in Oslo2",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        #column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_metabric),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(oslo2_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+
+ht <- ComplexHeatmap::Heatmap(oslo2_sig_mat_sel,
+                              column_title = "Notch Signature Scores in Oslo2\nOrdered by Signature Score",
+                        clustering_distance_columns = "manhattan",
+                        clustering_method_columns = "ward.D2",
+                        column_order = order(sign_scores),
+                        clustering_distance_rows = "manhattan",
+                        clustering_method_rows = "ward.D2",
+                        row_order = order(-correlation_metabric),
+                        show_column_names = FALSE,
+                        row_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Signature\nScore"),
+                        column_split = column_split,
+                        # row_km = 3,
+                        right_annotation = row_ha,
+                        top_annotation = col_ha,
+                        row_names_max_width = max_text_width(
+                          rownames(oslo2_sig_mat_sel), 
+                          gp = gpar(fontsize = 8)
+                        ))
+
+draw(ht)
+
+```
+
+# Save
+
+```{r 29-save}
+save(sig.scores_tcga_published.notch,
+     sig.scores_tcga_opt.notch,
+     sig.scores_metabric_published.notch,
+     sig.scores_metabric_opt.notch,
+     sig.scores_oslo2_published.notch,
+     sig.scores_oslo2_opt.notch,
+     gs.list.opt_notch_excel, 
+     gs.list.published_notch_excel, 
+     all_coherence_scores, 
+     Training_gsea_summary, 
+     df_gsea_validation, 
+     decision_df,
+     phe_tcga, 
+     phe_cbioportal_metabric,
+     file = "../RData/Part7b.RData")
+```
+
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```
