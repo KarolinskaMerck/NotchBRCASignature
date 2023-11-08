@@ -158,8 +158,9 @@ We want to identify general applicable signatures for the activation and inactiv
 
 1. Correlation of the public and study derived signatures in public data sets to tumor purity / immune infiltration.
 2. Testing of the PAM50-subtypes and Hormone-Receptor status against the signatures
-3. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
-4. Understand the relation of the signatures against each other.  
+3. Testing the correlation of each of the signatures against the NOTCH-receptor/ligand expression levels
+4. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
+5. Understand the relation of the signatures against each other.  
 
 **Conclusion**  
 

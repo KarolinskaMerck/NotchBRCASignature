@@ -83,6 +83,7 @@ library(tidyverse)
 
 library(readxl)
 library(xlsx)
+library(openxlsx)
 library(knitr)
 library(kableExtra)
 
@@ -93,6 +94,7 @@ library(circlize)
 library(ggthemes)
 library(ComplexHeatmap)
 library(scales)
+library(cowplot)
 
 library(DESeq2)
 library(edgeR)
@@ -106,6 +108,7 @@ library(sva)
 library(vsn)
 library(PCAtools)
 library(uwot)
+library(pROC)
 
 library(msigdbr)
 library(org.Hs.eg.db)
@@ -205,6 +208,9 @@ Statistics were calculated using the `rstatix` package [@R-rstatix].
 
 **Gene set and genomic annotations**  
 In addition to the gene signatures from publications and adaption of gene symbols from mouse to human via `org.Hs.eg.db` and `ClusterProfiler` [@R-AnnotationDbi; @R-org.Hs.eg.db; @clusterProfiler2012; @R-clusterProfiler], all gene signatures with NOTCH in the name were loaded from the MSIGdb via `msigdbr` [@R-msigdbr].  
+
+**ROC Analysis**  
+Receiver operating characteristic (ROC) and accuracy rates were calculated with the help of the implementation of `pROC` [@R-pROC; @pROC2011].   
  
 
 ```{r 02-load-data}
@@ -569,10 +575,91 @@ Validation_gsea_summary %>%
                       limits = c(0,0.05),
                       na.value = merck_colors[1]) +
   rotate_x_text(angle = 90)
+
+
+
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE)),
+                textlabel = round(NES, digits = 1)) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "darkgrey",
+               size = 2) +
+  geom_point(size = 8,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 3) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(0, 2))
+
+
+
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "black") +
+  geom_point(size = 8,
+             shape = 16) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(0, 2))
+  
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust)) +
+  geom_point(size = 4,
+             shape = 16) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(0, 2))
   
 ```
-
-
 
 ## GSEA of all 15 signatures
 
@@ -592,6 +679,9 @@ Validation_gsea_summary %>%
 #    tpm_mat_full)
 
 ### --- Do GSEA
+
+# save all signatures from the initial search
+gene_set_list_14_notch <- gene_set_list_opt_notch
 
 combined_gs.list <- c(gene_set_list_opt_notch)
 
@@ -837,7 +927,7 @@ if(nrow(as.data.frame(gsea_Jagged1_DAPT_72h)) != 0){
 ```
 
 
-### Figure: All three comparisons for the three signatures
+### Figure: All three comparisons for the 15 signatures
 
 ```{r fig.height=2.5, fig.width=10}
 
@@ -858,6 +948,88 @@ Validation_gsea_summary %>%
                       limits = c(0,0.05),
                       na.value = merck_colors[1]) +
   rotate_x_text(angle = 90)
+
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE)),
+                textlabel = round(NES, digits = 1)) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "darkgrey",
+               size = 1) +
+  geom_point(size = 6,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 2) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(-2, 2))
+
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "black") +
+  geom_point(size = 3,
+             shape = 16) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(-2, 2))
+  
+
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = str_replace(ID, "\\_", " "),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(ID = factor(ID, levels = str_sort(unique(.$ID), numeric = TRUE))) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust)) +
+  geom_point(size = 3,
+             shape = 16) +
+  facet_wrap(~ gsea) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(-2, 2))
+
+
+
 
 ```
 
@@ -1144,10 +1316,9 @@ if(nrow(as.data.frame(gsea_Jagged1_DAPT_72h)) != 0){
 ```
 
 
-### Figure: All three comparisons for the three signatures
+### Figure: All three comparisons for the tested signatures
 
 ```{r fig.height=12, fig.width=10}
-
 Validation_gsea_summary %>% 
   dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>%
                                       dplyr::filter(gsea == "Jagged1_DAPT") %>% 
@@ -1172,12 +1343,52 @@ Validation_gsea_summary %>%
                       limits = c(0,0.05),
                       na.value = merck_colors[1]) +
   rotate_x_text(angle = 90)
+```
+
+
+```{r fig.height=12, fig.width=12}
+Validation_gsea_summary %>% 
+  dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>%
+                                      dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                                      dplyr::arrange(desc(NES)) %>% 
+                                      pull(ID),
+                            labels = Validation_gsea_summary %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              pull(ID) %>% 
+                              str_replace_all("\\_", " ")),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(textlabel = round(NES, digits = 1)) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "darkgrey",
+               size = 1) +
+  geom_point(size = 5,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 2) +
+  facet_wrap(~ gsea, ncol = 1) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(-2, 2))
 
 ```
 
 
 ```{r fig.height=10, fig.width=5}
-
 Validation_gsea_summary %>% 
   dplyr::filter(ID %in% !!focus_signatures) %>% 
   dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>% 
@@ -1205,13 +1416,60 @@ Validation_gsea_summary %>%
                       limits = c(0,0.05),
                       na.value = merck_colors[1]) +
   rotate_x_text(angle = 90)
+```
+
+
+```{r fig.height=10, fig.width=6}
+Validation_gsea_summary %>% 
+  dplyr::filter(ID %in% !!focus_signatures) %>% 
+  dplyr::mutate(ID = factor(ID, levels = Validation_gsea_summary %>% 
+                              dplyr::filter(ID %in% !!focus_signatures) %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              dplyr::pull(ID),
+                            labels = Validation_gsea_summary %>% 
+                              dplyr::filter(ID %in% !!focus_signatures) %>%
+                              dplyr::filter(gsea == "Jagged1_DAPT") %>% 
+                              dplyr::arrange(desc(NES)) %>% 
+                              dplyr::pull(ID) %>% 
+                              str_replace_all("\\_", " ")),
+                gsea = str_replace(gsea, "Jagged1_DAPT", "Notch On vs. Notch Off"),
+                gsea = str_replace(gsea, "_", ": "),
+                gsea = str_replace(gsea, "f$", "f: 8h+72h")) %>% 
+  dplyr::mutate(gsea = factor(gsea, levels = unique(gsea))) %>% 
+  dplyr::mutate(textlabel = round(NES, digits = 1)) %>% 
+  ggplot(aes(x = ID,
+             y = NES,
+             color = p.adjust,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = NES),
+               color = "darkgrey",
+               size = 1) +
+  geom_point(size = 5,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 2) +
+  facet_wrap(~ gsea, ncol = 1) +
+  scale_color_gradient(low = merck_colors[6],
+                      high = merck_colors[1],
+                      limits = c(0,0.05),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(-2, 2))
+
 
 ```
 
 
-# Calculation of signature scores in the breast cancer cell lines
+# Cell Line Characteristica
 
-The calculation will be done on the TPM values. To understand whether there are batch effects between the TPM values of the two experimental conditions, both the training and the validation cohort are combined and batch corrected using Combat.  
+## Expression data of breast cancer cell lines
+
+Signature calculation will be done on the scaled TPM values. To understand whether there are batch effects between the TPM values of the two experimental conditions, both the training and the validation cohort are combined and batch corrected using Combat.  
 
 ```{r, dev='png'}
 Validation_df <- validation_TPM %>% 
@@ -1325,7 +1583,7 @@ p <- pca(batch_tpm_scaled,
 
 biplot(p,
        title = "PC1 vs PC2",
-       subtitle = "Breast Cancer experimental batches",
+       subtitle = "Batch corrected Breast Cancer experimental batches",
        lab = NA,
        pointSize = 2,
        colby = 'condition_batch',
@@ -1337,7 +1595,7 @@ biplot(p,
 
 biplot(p,
        title = "PC1 vs PC2",
-       subtitle = "Breast Cancer experimental batches",
+       subtitle = "Batch corrected Breast Cancer experimental batches",
        lab = NA,
        pointSize = 2,
        colby = 'condition_subtype',
@@ -1349,7 +1607,7 @@ biplot(p,
 
 biplot(p,
        title = "PC1 vs PC2",
-       subtitle = "Breast Cancer cell lines",
+       subtitle = "Batch corrected Breast Cancer cell lines",
        lab = NA,
        pointSize = 2,
        colby = 'stripped_cell_line_name',
@@ -1454,13 +1712,11 @@ tpm_df_scaled <- tpm_df %>%
 save(tpm_df_scaled, file = "../RData/BRCA_Cell_Lines_TPM.RData")
 save(batch_tpm_long, file = "../RData/BRCA_Cell_Lines_TPM_batch_corrected.RData")
 
-rm(batch_tpm_long, batch_tpm, batch_tpm_scaled,tpm_df_wide_na, Validation_df, Training_df, Validation_TPM, Training_TPM, tpm_df, batch_tpm_k)
+rm(batch_tpm_long, batch_tpm, batch_tpm_scaled,tpm_df_wide_na, Validation_df, Training_df, Training_TPM, tpm_df, batch_tpm_k)
 
 ```
 
-# Cell Line characteristica
-
-## Combined plot
+## Cell line characteristica
 
 ```{r 08e-receptors-expression-hm, fig.height=2.5, fig.width=5}
 
@@ -1724,7 +1980,6 @@ draw(ht %v% ht2 %v% ht3, heatmap_legend_side = "right", annotation_legend_side =
 
 ```
 
-
 ```{r 09-notch-expression-hm, fig.height=7, fig.width=10}
 
 receptor_expression <- tpm_df_scaled %>%
@@ -1879,9 +2134,9 @@ draw(ht %v% ht2 %v% ht3, heatmap_legend_side = "right", annotation_legend_side =
 
 ```
 
-## Signature scores in the experiments
+# Calculation of the signature scores in the experiments
 
-```{r message=FALSE, warning=FALSE, include=FALSE}
+```{r calculation_of_signature_scores, message=FALSE, warning=FALSE, include=FALSE}
 
 signature_score <- function(x, df){
   df %>% 
@@ -1892,17 +2147,1409 @@ signature_score <- function(x, df){
 }
 
 sig.scores_published.notch <- map_dfr(gs.list.published_notch, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
-
+sig.scores_14.notch <- map_dfr(gene_set_list_14_notch, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
 sig.scores_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
 
 all_signatures <- sig.scores_published.notch %>% 
     dplyr::bind_rows(sig.scores_opt.notch)
 
+##### calculate separately the NOTCH Core signature
+
+NOTCH_CORE_SIG_genes <- list(NOTCH_CORE_SIG = c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4", "DLL1", "DLL3", "DLL4", "JAG1", "JAG2")) 
+
+sig.notch_core_all_lines <- map_dfr(NOTCH_CORE_SIG_genes, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name") %>% 
+  dplyr::distinct()
+
+NOTCH_CORE_SIG_genes_all_lines <- tpm_df_scaled %>% 
+  dplyr::filter(id_gene_symbol %in% !!unlist(NOTCH_CORE_SIG_genes))
+
+
+## write signatures into excel list:
+
+all_signatures_export <- all_signatures %>% 
+    dplyr::bind_rows(sig.notch_core_all_lines) %>% 
+  dplyr::mutate(condition_batch = ifelse(condition_batch == "Training", "Basal-like 6 cell line panel", "Breast Cancer 19 cell line panel"))
+
+wb <- createWorkbook()
+addWorksheet(wb, "Cell Lines")
+writeData(wb, 
+          "Cell Lines", 
+          all_signatures_export)
+saveWorkbook(wb, "../results/signature_scores.xlsx", overwrite = TRUE)
+
 ```
 
-### Ground State signature scores in the validation cohort of breast cancer cell lines
+```{r cell_lines_ground_state, fig.height=4, fig.width=8}
 
-#### Statistics
+signature_opt_notch_core_correlation <- sig.notch_core_all_lines %>% 
+  bind_rows(sig.scores_opt.notch) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  pivot_wider(names_from = "id_geneset_name",
+              values_from = "quant_signature")
+
+signature_opt_notch_core_correlation %>% 
+  dplyr::filter(condition_treatment == "FC") %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = `Notch 20-Gene Signature`)) +
+  geom_point(aes(color = stripped_cell_line_name)) +
+  scale_color_manual(values = merck_colors_ext(1:20)) +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "Cell Lines at Ground State") + 
+  stat_cor(method = "pearson", label.x = -0.5, label.y = 2,
+           p.accuracy = 0.001, r.accuracy = 0.01,
+           size = 4) +
+  facet_wrap(~condition_batch)
+
+```
+
+```{r cell_lines_all_states, fig.width=8, fig.height=4}
+
+signature_opt_notch_core_correlation %>% 
+  dplyr::mutate(condition_treatment = ifelse(condition_treatment == "FC + DAPT", "DAPT", condition_treatment)) %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = `Notch 20-Gene Signature`)) +
+  geom_point(aes(color = stripped_cell_line_name)) +
+  scale_color_manual(values = merck_colors_ext(1:20)) +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "Cell Lines at Ground State") + 
+  stat_cor(method = "pearson", label.x = -0.5, label.y = 2,
+           p.accuracy = 0.001, r.accuracy = 0.01,
+           size = 3) +
+    facet_grid(condition_batch ~ condition_treatment)
+```
+
+
+```{r correlation_core_all_signatures, fig.height=42, fig.width=9}
+# get R values for all, heatmap
+
+cell_lines_core_signature_correlation <- sig.notch_core_all_lines %>% 
+  dplyr::rename(`NOTCH CORE SIG` = quant_signature) %>% 
+  dplyr::select(-id_geneset_name) %>% 
+  dplyr::left_join(sig.scores_opt.notch %>% 
+    dplyr::bind_rows(sig.scores_published.notch)) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::filter(condition_treatment == "FC")
+
+cell_lines_core_signature_correlation_padj <- cell_lines_core_signature_correlation %>%
+  group_by(id_geneset_name, condition_batch) %>%
+ cor_test(`NOTCH CORE SIG`, quant_signature) %>% 
+  rstatix::adjust_pvalue() %>% 
+  rstatix::add_significance() %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(p_level = ifelse(p.adj < 0.001, "<0.001", 
+                                 ifelse(p.adj > 0.05, "= ns", 
+                                        paste0("= ", signif(p.adj, digits = 2)))))
+
+
+cell_lines_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = quant_signature)) +
+  facet_grid(id_geneset_name ~ condition_batch) +
+  geom_point(aes(color = stripped_cell_line_name),
+             size = 1) +
+  scale_color_manual(values = merck_colors_ext(1:20)) +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "NOTCH Signature corelation to NOTCH Core Signature",
+       subtitle = "In Ground State Cell Lines",
+       x = "Signature Score",
+       color = "Cell Line Name") + 
+  geom_text(data = cell_lines_core_signature_correlation_padj,
+            aes(y = 1,
+                x = -1,
+                label = paste("R =", signif(cor, digits = 2), "; p", p_level)),
+            size = 2.5,
+            vjust = 0.5,
+            hjust = 0) +
+  theme(strip.text.y = element_text(size = 6, angle = 0, hjust = 0),
+        strip.background.y =element_rect(fill = NA,
+                                         color = NA))
+```
+
+```{r correlation_core_focus_signatures, fig.height=15, fig.width=7}
+
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+labels_keep <- str_replace_all(focus_signatures, "\\_", " ")
+
+cell_lines_core_signature_correlation %>% 
+  dplyr::filter(id_geneset_name %in% labels_keep) %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = quant_signature)) +
+  facet_grid(id_geneset_name ~ condition_batch) +
+  geom_point(aes(color = stripped_cell_line_name),
+             size = 1) +
+  scale_color_manual(values = merck_colors_ext(1:20)) +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "NOTCH Signature corelation to NOTCH Core Signature",
+       subtitle = "In Ground State Cell Lines",
+       x = "Signature Score",
+       color = "Cell Line Name") + 
+  geom_text(data = (cell_lines_core_signature_correlation_padj %>% 
+              dplyr::filter(id_geneset_name %in% labels_keep)),
+            aes(y = 1,
+                x = -1,
+                label = paste("R =", signif(cor, digits = 2), "; p", p_level)),
+            size = 2.5,
+            vjust = 0.5,
+            hjust = 0) +
+  theme(strip.text.y = element_text(size = 6, angle = 0, hjust = 0),
+        strip.background.y =element_rect(fill = NA,
+                                         color = NA))
+```
+
+```{r correlation_core_signature_heatmap_all, fig.height=8, fig.width=12}
+
+core_signature_correlation_heatmap <- cell_lines_core_signature_correlation_padj %>% 
+  dplyr::select(id_geneset_name, cor, condition_batch) %>% 
+  pivot_wider(names_from = "condition_batch",
+              values_from = "cor") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\n", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% t()
+
+core_signature_correlation_heatmap_padj <- cell_lines_core_signature_correlation_padj %>% 
+  dplyr::select(id_geneset_name, p.adj, condition_batch) %>% 
+  pivot_wider(names_from = "condition_batch",
+              values_from = "p.adj") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\n", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% t()
+
+core_signature_correlation_heatmap_class <- core_signature_correlation_heatmap_padj
+
+core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj > 0.05] <- "ns"
+#core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj < 0.01] <- "**"
+#core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj < 0.001] <- "***"
+
+col_fun = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[2]))
+
+ComplexHeatmap::Heatmap(core_signature_correlation_heatmap, 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Correlation of NOTCH signatures in breast cancer cell lines\nat ground state to the NOTCH Core Signature",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(core_signature_correlation_heatmap)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(core_signature_correlation_heatmap), 
+                          gp = gpar(fontsize = 8)
+                          ),
+                        height = unit(5, "mm")*nrow(core_signature_correlation_heatmap),
+                        heatmap_legend_param = list(
+                          title = "Correlation Coefficient", at = c(-1, 0, 1)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(core_signature_correlation_heatmap_padj[i, j] > 0.05){
+                            grid.text(core_signature_correlation_heatmap_class[i, j], x, y, gp = gpar(fontsize = 6))
+                          }
+                        })
+
+
+```
+
+```{r correlation_core_signature_heatmap_focus, fig.width=8, fig.height=7}
+# signatures to show:
+
+
+ComplexHeatmap::Heatmap(core_signature_correlation_heatmap[,colnames(core_signature_correlation_heatmap) %in% labels_keep], 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Correlation of NOTCH signatures in breast cancer cell lines\nat ground state to the NOTCH Core Signature",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(core_signature_correlation_heatmap)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(core_signature_correlation_heatmap), 
+                          gp = gpar(fontsize = 8)
+                          ),
+                        height = unit(5, "mm")*nrow(core_signature_correlation_heatmap),
+                        heatmap_legend_param = list(
+                          title = "Correlation Coefficient", at = c(-1, 0, 1)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(core_signature_correlation_heatmap_padj[,colnames(core_signature_correlation_heatmap_padj) %in% labels_keep][i, j] > 0.05){
+                            grid.text(core_signature_correlation_heatmap_class[,colnames(core_signature_correlation_heatmap_class) %in% labels_keep][i, j], x, y, gp = gpar(fontsize = 7))
+                          }
+                        })
+
+
+## save data as excel
+
+xlsx::write.xlsx(cell_lines_core_signature_correlation_padj,
+                 file = "../results/Table_S8_cor_signatures_to_core_signature.xlsx",
+                 sheet = "cell_line_panel")
+
+```
+
+
+## ROC-analysis
+
+We calculate the relative signature score (= Condition - Ground State) calculated on the 19 cell line set with known NOTCH alteration levels (as treated with either DAPT or cultivated on immobilized Jagged1). Subsequently, we do a ROC analysis to evaluate accuracy of the signatures to evaluate NOTCH activation levels.  
+
+### top 3 signatures in all cancer subtypes for all timepoints (8h + 72h)
+
+```{r fig.width=9, fig.height=3}
+
+# calculate signature scores for each of the models at each of the timepoints and treatment types
+
+data_signature <- sig.scores_14.notch %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::filter(condition_batch == "Validation") %>% 
+  tidyr::pivot_wider(names_from = "id_geneset_name",
+                     values_from = "quant_signature") %>% 
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`   = 'ground state',
+    `FC + DAPT`      = 'Notch off',
+    `Jagged1`     = 'Notch on',
+    `Jagged1 + DAPT`  = 'Notch on/off')) %>%
+  dplyr::filter(condition_treatment != 'Notch on/off') %>% 
+  dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>%
+  tidyr::pivot_longer(-c(1:7),
+                      names_to = "id_geneset_name",
+                      values_to = "score") %>%
+  dplyr::select(-sample_name) %>% 
+  tidyr::pivot_wider(names_from = "condition_treatment",
+                     values_from = "score") %>%
+  dplyr::mutate(`Notch on rel` = `Notch on` - `ground state`,
+                  `Notch off rel` = `Notch off` - `ground state`) %>%
+  dplyr::select(-`ground state`) %>% 
+  tidyr::pivot_longer(-c(1:6),
+                      names_to = "condition_treatment",
+                      values_to = "quant_rel") %>% 
+  dplyr::filter(!is.na(quant_rel))
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment),
+                id_geneset_name %in% c("signature 5", "signature 9", "signature 11"))
+
+plot_list_3_rel <- list()
+conf_int_3_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_3_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_3_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_3_rel <- bind_rows(conf_int_3_rel)
+DT::datatable(conf_int_3_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          ) 
+
+
+plot_grid(plotlist=plot_list_3_rel,
+          nrow= 1)
+
+
+
+```
+
+
+### top 3 signatures in all cancer subtypes at 8h
+
+```{r fig.width=9, fig.height=3}
+
+# calculate signature scores for each of the models at each of the timepoints and treatment types
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment),
+                condition_time == "8h",
+                id_geneset_name %in% c("signature 5", "signature 9", "signature 11"))
+
+plot_list_3_8h_rel <- list()
+conf_int_3_8h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_3_8h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_3_8h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_3_8h_rel <- bind_rows(conf_int_3_8h_rel)
+DT::datatable(conf_int_3_8h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          ) 
+
+
+plot_grid(plotlist=plot_list_3_8h_rel,
+          nrow= 1)
+
+
+
+```
+
+
+### top 3 signatures in all cancer subtypes at 72h
+
+```{r fig.width=9, fig.height=3}
+
+# calculate signature scores for each of the models at each of the timepoints and treatment types
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment),
+                condition_time == "72h",
+                id_geneset_name %in% c("signature 5", "signature 9", "signature 11"))
+
+plot_list_3_72h_rel <- list()
+conf_int_3_72h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_3_72h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_3_72h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_3_72h_rel <- bind_rows(conf_int_3_72h_rel)
+DT::datatable(conf_int_3_72h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          ) 
+
+
+plot_grid(plotlist=plot_list_3_72h_rel,
+          nrow= 1)
+
+
+
+```
+
+#### AUC comparisons
+
+```{r fig.height=3.2, fig.width=8.5}
+
+conf_int_3 <- conf_int_3_rel %>% 
+  dplyr::mutate(facet = "Notch On vs. Notch Off: 8h+72h") %>% 
+  bind_rows(conf_int_3_8h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 8h")) %>% 
+  bind_rows(conf_int_3_72h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 72h"))
+
+
+conf_int_3 %>% 
+    dplyr::mutate(id_geneset_name = factor(id_geneset_name, levels = str_sort(unique(.$id_geneset_name), numeric = TRUE))) %>% 
+    dplyr::mutate(facet = factor(facet, levels = c("Notch On vs. Notch Off: 8h+72h",
+                                                   "Notch On vs. Notch Off: 8h",
+                                                   "Notch On vs. Notch Off: 72h"))) %>% 
+  ggplot(aes(x = id_geneset_name,
+             y = AUC,
+             fill = AUC)) + 
+  facet_wrap(~facet) +
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(ymin=lower, 
+                     ymax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(y = "AUC",
+       x = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "19 BC cell line data set, AUC with 95% CI")
+
+
+```
+
+
+
+### top 3 signatures in basal-like
+
+```{r fig.width=9, fig.height=3}
+
+# calculate signature scores for each of the models at each of the timepoints and treatment types
+# Relative scores in basal like breast cancer
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment),
+                condition_subtype == "basal",
+                id_geneset_name %in% c("signature 5", "signature 9", "signature 11"))
+
+plot_list_3_basal_rel <- list()
+conf_int_3_basal_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_3_basal_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_3_basal_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_3_basal_rel <- bind_rows(conf_int_3_basal_rel)
+DT::datatable(conf_int_3_basal_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          ) 
+
+plot_grid(plotlist=plot_list_3_basal_rel,
+          nrow= 1)
+
+```
+
+
+
+### 14 Signatures in all subtypes (8h+72h)
+
+```{r fig.width=4, fig.height=12}
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment))
+
+plot_list_14_rel <- list()
+conf_int_14_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_14_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_14_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_14_rel <- bind_rows(conf_int_14_rel)
+DT::datatable(conf_int_14_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+
+plot_grid(plotlist=plot_list_14_rel,
+          nrow= 7)
+
+
+xlsx::write.xlsx(conf_int_14_rel,
+                 append = TRUE,
+                 file = "Signatures_AUCs.xlsx",
+                 sheet = "ROC Validation Signatures 8+72h",
+                 row.names = FALSE)
+
+                 
+```
+
+
+### 14 Signatures in all subtypes (8h)
+
+```{r fig.width=4, fig.height=12}
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(condition_time == "8h",
+                grepl("rel$",condition_treatment))
+
+plot_list_14_8h_rel <- list()
+conf_int_14_8h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_14_8h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_14_8h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_14_8h_rel <- bind_rows(conf_int_14_8h_rel)
+DT::datatable(conf_int_14_8h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+
+plot_grid(plotlist=plot_list_14_8h_rel,
+          nrow= 7)
+
+
+xlsx::write.xlsx(conf_int_14_8h_rel,
+                 append = TRUE,
+                 file = "Signatures_AUCs.xlsx",
+                 sheet = "ROC Validation Signatures 8h",
+                 row.names = FALSE)
+                 
+```
+
+
+### 14 Signatures in all subtypes (72h)
+
+```{r fig.width=4, fig.height=12}
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(condition_time == "72h",
+                grepl("rel$",condition_treatment))
+
+plot_list_14_72h_rel <- list()
+conf_int_14_72h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_14_72h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_14_72h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_14_72h_rel <- bind_rows(conf_int_14_72h_rel)
+DT::datatable(conf_int_14_72h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+
+plot_grid(plotlist=plot_list_14_72h_rel,
+          nrow= 7)
+
+
+xlsx::write.xlsx(conf_int_14_72h_rel,
+                 append = TRUE,
+                 file = "Signatures_AUCs.xlsx",
+                 sheet = "ROC Validation Signatures 72h",
+                 row.names = FALSE)
+                 
+```
+
+### 14 Signatures in basal-like BRCA
+
+```{r fig.width=4, fig.height=12}
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(condition_subtype == "basal",
+                grepl("rel$",condition_treatment))
+
+plot_list_14_basal_rel <- list()
+conf_int_14_basal_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_14_basal_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_14_basal_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_14_basal_rel <- bind_rows(conf_int_14_basal_rel)
+DT::datatable(conf_int_14_basal_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+
+plot_grid(plotlist=plot_list_14_basal_rel,
+          nrow= 7)
+```
+
+### Our signature in comparison to other signatures in all subtypes
+
+#### 8h+72h
+
+```{r fig.width=12, fig.height=18}
+
+data_signatures_all <- all_signatures %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::filter(condition_batch == "Validation") %>% 
+  tidyr::pivot_wider(names_from = "id_geneset_name",
+                     values_from = "quant_signature") %>% 
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`   = 'ground state',
+    `FC + DAPT`      = 'Notch off',
+    `Jagged1`     = 'Notch on',
+    `Jagged1 + DAPT`  = 'Notch on/off')) %>%
+  dplyr::filter(condition_treatment != 'Notch on/off') %>% 
+  dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>%
+  tidyr::pivot_longer(-c(1:7),
+                      names_to = "id_geneset_name",
+                      values_to = "score") %>%
+  dplyr::select(-sample_name) %>% 
+  tidyr::pivot_wider(names_from = "condition_treatment",
+                     values_from = "score") %>%
+  dplyr::mutate(`Notch on rel` = `Notch on` - `ground state`,
+                  `Notch off rel` = `Notch off` - `ground state`) %>%
+  dplyr::select(-`ground state`) %>% 
+  tidyr::pivot_longer(-c(1:6),
+                      names_to = "condition_treatment",
+                      values_to = "quant_rel") %>% 
+  dplyr::filter(!is.na(quant_rel))
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signatures_all %>% 
+  dplyr::filter(grepl("rel$",condition_treatment))
+
+plot_list_all_rel <- list()
+conf_int_all_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_all_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    theme(title = element_text(size = 6)) +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_all_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_all_rel <- bind_rows(conf_int_all_rel)
+
+DT::datatable(conf_int_all_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+plot_grid(plotlist=plot_list_all_rel,
+          nrow= 10)
+
+xlsx::write.xlsx(conf_int_all_rel,
+                 file = "Signatures_AUCs.xlsx",
+                 append = TRUE,
+                 sheet = "ROC Validation Published 8+72h",
+                 row.names = FALSE)
+
+```
+
+
+#### 8h
+
+```{r fig.width=12, fig.height=18}
+
+data_signature_rel <- data_signatures_all %>% 
+  dplyr::filter(condition_time == "8h",
+                grepl("rel$",condition_treatment))
+
+plot_list_all_8h_rel <- list()
+conf_int_all_8h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_all_8h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    theme(title = element_text(size = 6)) +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_all_8h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_all_8h_rel <- bind_rows(conf_int_all_8h_rel)
+
+DT::datatable(conf_int_all_8h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+plot_grid(plotlist=plot_list_all_8h_rel,
+          nrow= 10)
+
+xlsx::write.xlsx(conf_int_all_8h_rel,
+                 file = "Signatures_AUCs.xlsx",
+                 append = TRUE,
+                 sheet = "ROC Validation Published 8h",
+                 row.names = FALSE)
+
+```
+
+#### 72h
+
+```{r fig.width=12, fig.height=18}
+
+data_signature_rel <- data_signatures_all %>% 
+  dplyr::filter(condition_time == "72h",
+                grepl("rel$",condition_treatment))
+
+plot_list_all_72h_rel <- list()
+conf_int_all_72h_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_all_72h_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    theme(title = element_text(size = 6)) +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_all_72h_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_all_72h_rel <- bind_rows(conf_int_all_72h_rel)
+
+DT::datatable(conf_int_all_72h_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+plot_grid(plotlist=plot_list_all_72h_rel,
+          nrow= 10)
+
+xlsx::write.xlsx(conf_int_all_72h_rel,
+                 file = "Signatures_AUCs.xlsx",
+                 append = TRUE,
+                 sheet = "ROC Validation Published 72h",
+                 row.names = FALSE)
+
+```
+
+
+#### Visualization as barplot
+
+```{r fig.height=12, fig.width=15}
+conf_int_all <- conf_int_all_rel %>% 
+  dplyr::mutate(facet = "Notch On vs. Notch Off: 8h+72h") %>% 
+  bind_rows(conf_int_all_8h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 8h")) %>% 
+  bind_rows(conf_int_all_72h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 72h"))
+
+
+conf_int_all_order <- conf_int_all %>% 
+  dplyr::filter(facet == "Notch On vs. Notch Off: 8h+72h") %>% 
+  arrange(AUC) %>% 
+  pull(id_geneset_name)
+
+conf_int_all$id_geneset_name <- factor(conf_int_all$id_geneset_name, 
+                                           levels = conf_int_all_order)
+
+conf_int_all %>% 
+    dplyr::mutate(facet = factor(facet, levels = c("Notch On vs. Notch Off: 8h+72h",
+                                                   "Notch On vs. Notch Off: 8h",
+                                                   "Notch On vs. Notch Off: 72h"))) %>% 
+  ggplot(aes(y = id_geneset_name,
+             x = AUC,
+             fill = AUC)) + 
+  facet_wrap(~facet) +
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(xmin=lower, 
+                     xmax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(x = "AUC",
+       y = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "19 BC cell line data set, AUC with 95% CI")
+```
+
+
+```{r fig.height=12, fig.width=15}
+
+
+conf_int_all_order_desc <- conf_int_all %>% 
+  dplyr::filter(facet == "Notch On vs. Notch Off: 8h+72h") %>% 
+  arrange(desc(AUC)) %>% 
+  pull(id_geneset_name)
+
+conf_int_all$id_geneset_name <- factor(conf_int_all$id_geneset_name, 
+                                           levels = conf_int_all_order_desc)
+
+conf_int_all %>% 
+    dplyr::mutate(facet = factor(facet, levels = c("Notch On vs. Notch Off: 8h+72h",
+                                                   "Notch On vs. Notch Off: 8h",
+                                                   "Notch On vs. Notch Off: 72h"))) %>% 
+  ggplot(aes(x = id_geneset_name,
+             y = AUC,
+             fill = AUC)) + 
+  facet_wrap(~facet, ncol = 1) +
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(ymin=lower, 
+                     ymax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(y = "AUC",
+       x = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "19 BC cell line data set, AUC with 95% CI")
+
+```
+
+#### Focus signatures
+
+##### 8h + 72h
+
+```{r fig.width=8, fig.height=9}
+focus_signatures_space <- str_replace_all(focus_signatures, "\\_", " ")
+
+plot_grid(plotlist=plot_list_all_rel[focus_signatures_space],
+          nrow= 5)
+```
+
+##### 8h
+
+```{r fig.width=8, fig.height=9}
+
+plot_grid(plotlist=plot_list_all_8h_rel[focus_signatures_space],
+          nrow= 5)
+```
+
+##### 72h
+
+```{r fig.width=8, fig.height=9}
+
+plot_grid(plotlist=plot_list_all_72h_rel[focus_signatures_space],
+          nrow= 5)
+```
+
+#### Focus Signatures Visualization as barplot
+
+```{r fig.height=6, fig.width=13}
+
+conf_int_all_rel_focus <- conf_int_all_rel %>% 
+  dplyr::mutate(facet = "Notch On vs. Notch Off: 8h+72h") %>% 
+  bind_rows(conf_int_all_8h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 8h")) %>% 
+  bind_rows(conf_int_all_72h_rel  %>%
+              dplyr::mutate(facet = "Notch On vs. Notch Off: 72h")) %>% 
+  dplyr::filter(id_geneset_name %in% focus_signatures_space)
+
+
+conf_int_all_rel_focus_order <- conf_int_all_rel_focus %>% 
+  dplyr::filter(facet == "Notch On vs. Notch Off: 8h+72h") %>% 
+  arrange(AUC) %>% 
+  pull(id_geneset_name)
+
+conf_int_all_rel_focus$id_geneset_name <- factor(conf_int_all_rel_focus$id_geneset_name, 
+                                           levels = conf_int_all_rel_focus_order)
+
+
+conf_int_all_rel_focus %>% 
+    dplyr::mutate(facet = factor(facet, levels = c("Notch On vs. Notch Off: 8h+72h",
+                                                   "Notch On vs. Notch Off: 8h",
+                                                   "Notch On vs. Notch Off: 72h"))) %>% 
+  ggplot(aes(y = id_geneset_name,
+             x = AUC,
+             fill = AUC)) + 
+  facet_wrap(~facet) +
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(xmin=lower, 
+                     xmax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(x = "AUC",
+       y = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "19 BC cell line data set, AUC with 95% CI")
+
+```
+
+### Our signature in comparison to other signatures in basal-like BRCA
+
+```{r fig.width=12, fig.height=18}
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signatures_all %>% 
+  dplyr::filter(condition_subtype == "basal",
+                grepl("rel$",condition_treatment))
+
+plot_list_all_basal_rel <- list()
+conf_int_all_basal_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_all_basal_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    theme(title = element_text(size = 6)) +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_all_basal_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_all_basal_rel <- bind_rows(conf_int_all_basal_rel)
+
+DT::datatable(conf_int_all_basal_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          )  
+
+plot_grid(plotlist=plot_list_all_basal_rel,
+          nrow= 10)
+```
+
+
+#### Visualization as barplot
+
+```{r fig.height=10, fig.width=10}
+
+conf_int_all_basal_rel$id_geneset_name <- factor(conf_int_all_basal_rel$id_geneset_name, 
+                                           levels = conf_int_all_basal_rel$id_geneset_name[order(conf_int_all_basal_rel$AUC,decreasing = FALSE)])
+
+ggplot(conf_int_all_basal_rel) +
+  geom_bar( aes(y=id_geneset_name, 
+                x=AUC,
+                fill = AUC), 
+            stat="identity") +
+  geom_errorbar( aes(y=id_geneset_name, xmin=lower, xmax=upper), 
+                 width=0.8, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(y = "Signatures",
+       x = "AUC",
+       title = "ROC Analysis for published signatures",
+       subtitle = "Basal like cell lines of the 19 BC cell line data set, AUC with 95% CI")
+
+```
+
+#### Focus signatures
+
+```{r fig.width=8, fig.height=9}
+
+plot_grid(plotlist=plot_list_all_basal_rel[focus_signatures_space],
+          nrow= 5)
+
+```
+
+
+#### Focus Signatures Visualization as barplot
+
+```{r fig.height=4, fig.width=8}
+
+conf_int_all_basal_rel_focus <- conf_int_all_basal_rel %>% 
+  dplyr::filter(id_geneset_name %in% focus_signatures_space) %>% 
+  dplyr::mutate(id_geneset_name = droplevels(id_geneset_name))
+
+ggplot(conf_int_all_basal_rel_focus) +
+  geom_bar( aes(y=id_geneset_name, 
+                x=AUC,
+                fill = AUC), 
+            stat="identity") +
+  geom_errorbar( aes(y=id_geneset_name, xmin=lower, xmax=upper), 
+                 width=0.8, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(y = "Signatures",
+       x = "AUC",
+       title = "ROC Analysis for published signatures",
+       subtitle = "Basal like cell lines of the 19 BC cell line data set, AUC with 95% CI")
+
+```
+
+## Ground State signature scores in the validation cohort of breast cancer cell lines
+
+### Statistics
 
 * basal-like subtype against the rest for the signature comparison
 * all comparisons for the plots (only basal against the rest printed) 
@@ -1964,40 +3611,11 @@ DT::datatable(pwc_quant.signatures %>%
           )  %>%
   DT::formatStyle(columns = c(1:(ncol(pwc_quant.signatures)-1)), fontSize = '70%')   # reduces font size of column titles
 
-# 
-# data_signature <- all_signatures %>%
-#   dplyr::filter(condition_batch == "Validation",
-#                 condition_treatment == "FC") %>%
-#   dplyr::mutate(condition_treatment=dplyr::recode_factor(
-#     condition_treatment,
-#     `FC`   = 'ground state'))
-# 
-# data_signature$condition_subtype <- factor(data_signature$condition_subtype)
-# data_signature$condition_time <- factor(data_signature$condition_time, levels = c("8h", "72h"))
-# 
-# # Pairwise comparisons
-# 
-# pwc_quant.signatures <- data_signature %>% 
-#   #dplyr::group_by(id_geneset_name, condition_time) %>% # time not needed here
-#   dplyr::group_by(id_geneset_name) %>%
-#   rstatix::wilcox_test(quant_signature  ~ condition_subtype) %>% 
-#   adjust_pvalue(method = "BH")  %>% 
-#   add_significance()
-
-# pwc_quant.signatures <- pwc_quant.signatures %>% 
-#   dplyr::filter(group1 == "basal")
-
 ```
 
 ```{r, fig.width=4, fig.height=5}
 
 detach("package:coin", unload=TRUE)
-
-# gs.list.opt_notch
-# sig.scores_opt.notch
-# 
-# gs.list.published_notch
-# sig.scores_published.notch
 
 for(i in focus_signatures){
 
@@ -2052,85 +3670,78 @@ for(i in focus_signatures){
 }
 ```
 
-### Relative signature scores (Treatment - Ground State) at both time points in the validation cohort of breast cancer cell lines
+## Relative signature scores (Treatment - Ground State) at both time points in the validation cohort of breast cancer cell lines
 
 ```{r, fig.width=4, fig.height=5}
 
-# gs.list.opt_notch
-# sig.scores_opt.notch
-# 
-# gs.list.published_notch
-# sig.scores_published.notch
+# calculate relative signature score
 
+data_signature_rel <- all_signatures %>%
+  dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
+  tidyr::pivot_wider(names_from = "id_geneset_name",
+                     values_from = "quant_signature") %>% 
+  dplyr::filter(condition_batch == "Validation") %>%
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`   = 'ground state',
+    `FC + DAPT`      = 'Notch off',
+    `Jagged1`     = 'Notch on',
+    `Jagged1 + DAPT`  = 'Notch on/off')) %>% 
+  dplyr::filter(condition_subtype != "lumb")
+  
+complete_cell_lines <- data_signature_rel %>%
+  dplyr::filter(condition_treatment != 'Notch on/off') %>% 
+  dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>% 
+    dplyr::group_by(stripped_cell_line_name, condition_time) %>%
+    dplyr::summarise(n = n()) %>%
+    dplyr::ungroup() %>%
+    dplyr::filter(n == 3) %>%
+    dplyr::select(stripped_cell_line_name, condition_time)
 
-  # calculate relative signature score
-  
-  data_signature_rel <- all_signatures %>%
-    dplyr::mutate(id_geneset_name = make.names(id_geneset_name)) %>% 
-    tidyr::pivot_wider(names_from = "id_geneset_name",
-                       values_from = "quant_signature") %>% 
-    dplyr::filter(condition_batch == "Validation") %>%
-    dplyr::mutate(condition_treatment=dplyr::recode_factor(
-      condition_treatment,
-      `FC`   = 'ground state',
-      `FC + DAPT`      = 'Notch off',
-      `Jagged1`     = 'Notch on',
-      `Jagged1 + DAPT`  = 'Notch on/off')) %>% 
-    dplyr::filter(condition_subtype != "lumb")
-    
-  complete_cell_lines <- data_signature_rel %>%
-    dplyr::filter(condition_treatment != 'Notch on/off') %>% 
-    dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>% 
-      dplyr::group_by(stripped_cell_line_name, condition_time) %>%
-      dplyr::summarise(n = n()) %>%
-      dplyr::ungroup() %>%
-      dplyr::filter(n == 3) %>%
-      dplyr::select(stripped_cell_line_name, condition_time)
-  
-  data_signature_rel <- data_signature_rel %>%
-    dplyr::right_join(complete_cell_lines) %>%
-    tidyr::pivot_longer(-c(1:7),
-                        names_to = "id_geneset_name",
-                        values_to = "score") %>%
-    dplyr::select(-sample_name) %>% 
-    tidyr::pivot_wider(names_from = "condition_treatment",
-                       values_from = "score") %>%
-      dplyr::mutate(`Notch on` = `Notch on` - `ground state`,
-                    `Notch off` = `Notch off` - `ground state`) %>%
-      dplyr::select(-`ground state`, -`Notch on/off`) %>% 
-    dplyr::mutate(condition_subtype = factor(condition_subtype))
-  
-  data_signature_rel <- data_signature_rel %>% 
-    tidyr::pivot_longer(-c(1:6),
-                        names_to = "condition_treatment",
-                        values_to = "quant_rel")
+data_signature_rel <- data_signature_rel %>%
+  dplyr::right_join(complete_cell_lines) %>%
+  tidyr::pivot_longer(-c(1:7),
+                      names_to = "id_geneset_name",
+                      values_to = "score") %>%
+  dplyr::select(-sample_name) %>% 
+  tidyr::pivot_wider(names_from = "condition_treatment",
+                     values_from = "score") %>%
+    dplyr::mutate(`Notch on` = `Notch on` - `ground state`,
+                  `Notch off` = `Notch off` - `ground state`) %>%
+    dplyr::select(-`ground state`, -`Notch on/off`) %>% 
+  dplyr::mutate(condition_subtype = factor(condition_subtype))
+
+data_signature_rel <- data_signature_rel %>% 
+  tidyr::pivot_longer(-c(1:6),
+                      names_to = "condition_treatment",
+                      values_to = "quant_rel")
   
 # Kruskal-Wallis Test
 
-  res.kruskal_rel <- data_signature_rel %>% 
-    dplyr::group_by(id_geneset_name, condition_subtype) %>% 
-    kruskal_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ ")))
+res.kruskal_rel <- data_signature_rel %>% 
+  dplyr::group_by(id_geneset_name, condition_subtype) %>% 
+  kruskal_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ ")))
   
 # Pairwise comparisons
   
-  pwc_rel <- data_signature_rel %>% 
-    group_by(id_geneset_name, condition_subtype) %>%
-    wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
-    adjust_pvalue(method = "BH") %>%
-    add_significance("p.adj") %>% 
-    add_xy_position(x = "condition_subtype")
-  
-  # comparison: basal against other
-  
-  data_signature_rel_other <- data_signature_rel %>% 
-    dplyr::mutate(condition_subtype = factor(ifelse(condition_subtype == "basal", "basal", "other"), levels = c("basal", "other")))
-  
-  pwc_rel_other <- data_signature_rel_other %>% 
-    group_by(id_geneset_name, condition_subtype) %>%
-    wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
-    adjust_pvalue(method = "BH") %>%
-    add_significance("p.adj") %>% 
-    add_xy_position(x = "condition_subtype")
+pwc_rel <- data_signature_rel %>% 
+  group_by(id_geneset_name, condition_subtype) %>%
+  wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "condition_subtype")
+
+# comparison: basal against other
+
+data_signature_rel_other <- data_signature_rel %>% 
+  dplyr::mutate(condition_subtype = factor(ifelse(condition_subtype == "basal", "basal", "other"), levels = c("basal", "other")))
+
+pwc_rel_other <- data_signature_rel_other %>% 
+  group_by(id_geneset_name, condition_subtype) %>%
+  wilcox_test(as.formula(paste("quant_rel", "condition_treatment", sep = " ~ "))) %>%
+  adjust_pvalue(method = "BH") %>%
+  add_significance("p.adj") %>% 
+  add_xy_position(x = "condition_subtype")
   
 for(i in focus_signatures){
   
@@ -2165,7 +3776,7 @@ for(i in focus_signatures){
 #dev.off()
 ```
 
-#### Statistics
+### Statistics
 
 Only basal-like subtype of interest for multiple testing correction.  
 
@@ -2192,7 +3803,7 @@ DT::datatable(pwc_rel %>%
 
 ```
 
-# Ground State Signature Scores and the relative change in signature score
+## Ground State Signature Scores and the relative change in signature score
 
 ```{r scatter_notch, fig.height=4, fig.width=5}
 
@@ -2203,45 +3814,6 @@ data_signature <- data_signature_rel %>%
                      dplyr::rename(ground_level = "quant_signature") %>% 
                      dplyr::select(-sample_name, -condition_treatment) %>% 
                      dplyr::mutate(id_geneset_name = make.names(id_geneset_name)))
-# 
-# data_signature <- all_signatures %>%
-#   tidyr::pivot_wider(names_from = "id_geneset_name",
-#                      values_from = "quant_signature") %>% 
-#   dplyr::filter(condition_batch == "Validation") %>%
-#   dplyr::mutate(condition_treatment=dplyr::recode_factor(
-#     condition_treatment,
-#     `FC`   = 'ground state',
-#     `FC + DAPT`      = 'Notch off',
-#     `Jagged1`     = 'Notch on',
-#     `Jagged1 + DAPT`  = 'Notch on/off'))
-# 
-# complete_cell_lines <- data_signature %>%
-#   dplyr::filter(condition_treatment != 'Notch on/off') %>% 
-#   dplyr::mutate(condition_treatment = droplevels(condition_treatment)) %>% 
-#     dplyr::group_by(stripped_cell_line_name, condition_time) %>%
-#     dplyr::summarise(n = n()) %>%
-#     dplyr::ungroup() %>%
-#     dplyr::filter(n == 3) %>%
-#     dplyr::select(stripped_cell_line_name, condition_time)
-# 
-# data_signature <- data_signature %>%
-#   dplyr::right_join(complete_cell_lines) %>% 
-#   dplyr::select(-condition_replicate) %>% 
-#   dplyr::filter(condition_treatment != "Notch on/off") %>% 
-#   pivot_longer(-c(sample_name, stripped_cell_line_name, condition_treatment, condition_time, condition_subtype, condition_batch),
-#                  names_to = "id_geneset",
-#                  values_to = "quant_signature")#
-# 
-# data_signature <- data_signature %>% 
-#   dplyr::left_join(data_signature %>% 
-#                      dplyr::filter(condition_treatment == "ground state") %>% 
-#                      dplyr::rename(ground_level = quant_signature) %>% 
-#                      dplyr::select(-condition_treatment, -sample_name)) %>% 
-#   dplyr::rowwise() %>% 
-#   dplyr::mutate(delta_signature = quant_signature - ground_level) %>% 
-#   dplyr::ungroup() %>% 
-#   dplyr::select(-quant_signature) %>% 
-#   dplyr::filter(condition_treatment != "ground state")
 
 for(i in focus_signatures){
     
@@ -2275,7 +3847,7 @@ for(i in focus_signatures){
 ```
 
 
-# Ground State Signature Scores and the relative change in signature score - only DAPT
+## Ground State Signature Scores and the relative change in signature score - only DAPT
 
 ```{r scatter_notch_ground_delta, fig.height=4, fig.width=5}
 
@@ -2310,6 +3882,225 @@ for(i in focus_signatures){
 
 }
 ```
+
+# Signature relationships
+
+We make use of the Jaccard index to understand the similarity of the different signature genes of the various signatures. Both Jaccard as well as the Overlap Coefficient are calculated and the distances plotted as a heatmaps with complete agglomeration.    
+
+Jaccard Index: This is defined as the size of the intersection divided by the size of the union of the two sets.  
+J(A,B)=  ∣A∩B∣ / ∣A∪B∣
+
+Overlap Coefficient: This is defined as the size of the intersection divided by the size of the smaller of the two sets.  
+O(A,B)= ∣A∩B∣ / min(∣A∣,∣B∣)  
+
+**Range:** Both the Jaccard Index and Overlap Coefficient take values between 0 and 1. A value of 0 indicates that the two sets have no elements in common, and a value of 1 indicates that the sets are identical (for Jaccard) or one is a subset of the other (for Overlap Coefficient).
+
+**Sensitivity to Size:**  
+Jaccard Index is more sensitive to the size of the union of the sets. If one set is much larger than the other, the Jaccard Index can be low even if the smaller set is entirely contained within the larger set.
+
+Overlap Coefficient is less sensitive to differences in set size. It can yield a high value if a large proportion of the smaller set is contained within the larger set, even if the absolute size of the intersection is small.
+
+**Interpretation:**  
+Jaccard Index is often interpreted as a measure of the relative similarity between two sets, accounting for both the shared and unique elements.
+Overlap Coefficient is often interpreted as a measure of the degree to which one set is a subset of another.
+
+**Use Cases:**  
+Jaccard Index is generally preferred when you want to account for both the similarities and differences between sets, and when the sets are of roughly equal size.  
+Overlap Coefficient might be more appropriate when you are specifically interested in quantifying the degree of overlap, and you expect that one set may be a subset of the other or that the set sizes may be imbalanced.  
+
+## Jaccard Index
+
+```{r fig.height=12, fig.width=12}
+library(ggdendro)
+
+all_signatures_to_compare <- c(gs.list.opt_notch, gs.list.published_notch)
+
+jaccard_similarity <- function(list1, list2) {
+  return(length(intersect(list1, list2)) / length(union(list1, list2)))
+}
+
+jaccard_similarity_matrix <- outer(all_signatures_to_compare, all_signatures_to_compare, Vectorize(function(x, y) jaccard_similarity(x, y)))
+
+hclust_jaccard_distance <- hclust(as.dist(1-jaccard_similarity_matrix), method = 'complete')
+
+ggdendro::ggdendrogram(hclust_jaccard_distance,
+             rotate = TRUE,
+             size = 0.5)
+
+col_fun = colorRamp2(c(0,0.5, 1), col_heatmap)
+
+rownames(jaccard_similarity_matrix) <- str_replace_all(rownames(jaccard_similarity_matrix), "\\_", " ")
+colnames(jaccard_similarity_matrix) <- str_replace_all(colnames(jaccard_similarity_matrix), "\\_", " ")
+
+ComplexHeatmap::Heatmap(jaccard_similarity_matrix,
+                        row_names_gp = gpar(fontsize = 8),
+                        column_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+    row_names_max_width = max_text_width(
+        rownames(jaccard_similarity_matrix), 
+        gp = gpar(fontsize = 12)
+    ),
+    column_names_max_height = max_text_width(
+        colnames(jaccard_similarity_matrix), 
+        gp = gpar(fontsize = 12)
+    ),
+    clustering_method_rows = "complete",
+    clustering_method_columns = "complete")
+
+
+
+xlsx::write.xlsx(jaccard_similarity_matrix,
+                 file = "../results/Table_S5_similarity_scores.xlsx",
+                 sheet = "Jaccard Index Matrix",
+                 append = FALSE)
+
+```
+
+### Mean Jaccard Similarity Score
+
+```{r fig.height=7, fig.width=12}
+### calculate mean similarity:
+
+# Exclude diagonal from mean calculation
+mean_similarities <- apply(jaccard_similarity_matrix, 1, function(row) {
+  mean(row[-which(row == max(row))])
+})
+
+data.frame(ID = names(mean_similarities),
+           `Mean similarities` = mean_similarities,
+           check.names = FALSE) %>% 
+  dplyr::mutate(ID = str_replace_all(ID, "\\_", " "),
+                ID = factor(ID, levels = str_replace_all(names(sort(mean_similarities)), "\\_", " ")),
+                textlabel = round(`Mean similarities`, digits = 2)) %>% 
+  ggplot(aes(x = ID,
+             y = `Mean similarities`,
+             color = `Mean similarities`,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = `Mean similarities`),
+               color = "darkgrey",
+               size = 1) +
+  geom_point(size = 6,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 2) +
+  scale_color_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0,max(mean_similarities)),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(0, max(mean_similarities)*1.1)) +
+  labs(title = "Mean Jaccard Similarities")
+
+
+xlsx::write.xlsx(mean_similarities,
+                 file = "../results/Table_S5_similarity_scores.xlsx",
+                 sheet = "Mean Jaccard Similarity Index",
+                 append = TRUE)
+
+```
+
+
+## Overlap Coefficient
+
+```{r fig.height=12, fig.width=12}
+
+overlap_coefficient <- function(set1, set2) {
+  intersection <- length(intersect(set1, set2))
+  smaller_set_size <- min(length(set1), length(set2))
+  return(intersection / smaller_set_size)
+}
+
+# overlap_coefficient(all_signatures_to_compare$`Notch 20-Gene Signature`, all_signatures_to_compare$`Notch 20-Gene Signature`)
+
+overlap_coefficient_matrix <- outer(all_signatures_to_compare, all_signatures_to_compare, Vectorize(function(x, y) overlap_coefficient(x, y)))
+
+hclust_overlap_distance <- hclust(as.dist(1-overlap_coefficient_matrix), method = 'complete')
+
+ggdendro::ggdendrogram(hclust_overlap_distance,
+             rotate = TRUE,
+             size = 0.5)
+
+col_fun = colorRamp2(c(0,0.5, 1), col_heatmap)
+
+rownames(overlap_coefficient_matrix) <- str_replace_all(rownames(overlap_coefficient_matrix), "\\_", " ")
+colnames(overlap_coefficient_matrix) <- str_replace_all(colnames(overlap_coefficient_matrix), "\\_", " ")
+
+ComplexHeatmap::Heatmap(overlap_coefficient_matrix,
+                        row_names_gp = gpar(fontsize = 8),
+                        column_names_gp = gpar(fontsize = 8),
+                        col = col_fun,
+    row_names_max_width = max_text_width(
+        rownames(overlap_coefficient_matrix), 
+        gp = gpar(fontsize = 12)
+    ),
+    column_names_max_height = max_text_width(
+        colnames(overlap_coefficient_matrix), 
+        gp = gpar(fontsize = 12)
+    ),
+    clustering_method_rows = "complete",
+    clustering_method_columns = "complete")
+
+xlsx::write.xlsx(overlap_coefficient_matrix,
+                 file = "../results/Table_S5_similarity_scores.xlsx",
+                 sheet = "Overlap Coefficient Matrix",
+                 append = TRUE)
+
+```
+
+## Mean Overlap Coefficient Score
+
+```{r fig.height=7, fig.width=12}
+### calculate mean similarity:
+
+# Exclude diagonal from mean calculation
+mean_similarities <- apply(overlap_coefficient_matrix, 1, function(row) {
+  mean(row[-which(row == max(row))])
+})
+
+data.frame(ID = names(mean_similarities),
+           `Mean similarities` = mean_similarities,
+           check.names = FALSE) %>% 
+  dplyr::mutate(ID = str_replace_all(ID, "\\_", " "),
+                ID = factor(ID, levels = str_replace_all(names(sort(mean_similarities)), "\\_", " ")),
+                textlabel = round(`Mean similarities`, digits = 2)) %>% 
+  ggplot(aes(x = ID,
+             y = `Mean similarities`,
+             color = `Mean similarities`,
+             label = textlabel)) +
+  geom_segment(aes(x = ID,
+                   xend = ID,
+                   y = 0,
+                   yend = `Mean similarities`),
+               color = "darkgrey",
+               size = 1) +
+  geom_point(size = 6,
+             shape = 16) +
+  geom_text(color = "white",
+            fontface = "bold",
+            size = 2) +
+  scale_color_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0,max(mean_similarities)),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  coord_cartesian(ylim = c(0, max(mean_similarities)*1.1)) +
+  labs(title = "Mean Overlap Coefficient")
+
+
+xlsx::write.xlsx(mean_similarities,
+                 file = "../results/Table_S5_similarity_scores.xlsx",
+                 sheet = "Mean Overlap Coefficient Score",
+                 append = TRUE)
+
+
+```
+
+
+
 
 ```{r}
 

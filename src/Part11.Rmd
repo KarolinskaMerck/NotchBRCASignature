@@ -1,0 +1,635 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 11 - Evaluation of NOTCH signatures in public patient cohorts"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part11.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  
+	fig.width = 6,
+	dpi = 150,                       
+	dev = c("png"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part11/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = FALSE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+
+library(readxl)
+library(xlsx)
+library(openxlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+library(ggnewscale)
+library(cowplot)
+library(circlize)
+library(ggthemes)
+library(ComplexHeatmap)
+
+library(cowplot)
+library(pROC)
+
+library(rmarkdown)
+library(DT)
+
+library(rstatix)
+
+library(viridis)
+
+# Merck X-Omics Platform:
+
+library(ProfilerAPI2)
+
+# Citations:
+
+knitr::write_bib(file = 'part11.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+all_subtype_colors <- c(subtype_colors, c("lumb" = as.character(merck_colors[4])))
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+batch_colors <- merck_colors[c(5,9)]
+names(batch_colors) <- c("Validation", "Training")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+</div>
+  
+**Methods**
+
+As we had no access to longitudinal gene expression data of patients treated with NOTCH pathway inhibitors and wanted to investigate the classification accuracy of gene expression signatures in patient samples for Notch pathway modulation status, we were curious whether our NOTCH signature could classify patient samples with genomic alteration of NOTCH. Therefore, we calculated a composite score integrating copy number alterations, structural variants and mutations across the core set of NOTCH genes (NOTCH1-4, DLL1, DLL3, DLL4, JAG1, and JAG2; from downloaded from cBioportal on 15.10.2023). This score aimed to reflect the cumulative impact of genetic aberrations on pathway activity, with the underlying hypothesis that such a composite measure would be more indicative of the pathway's functional status than individual alterations. Patients were classified into three categories: "NOTCH activation alterations", "NOTCH inactivation alterations", or "NOTCH wild-type". We assigned a score of -1 to deleterious mutations (including truncating and missense mutations) and homozygous deletions, +1 to amplifications, and 0 to wild-type observations.
+To assess the predictive power of the gene expression signatures, we employed receiver operating characteristic (ROC) analysis for two binary comparisons ("NOTCH activation alterations" versus "NOTCH wild-type", "NOTCH wild-type" versus "NOTCH wild-type", and "NOTCH activation alterations" vs. "NOTCH inactivation alterations") and calculated the area under the ROC curve (AUC) together with its 95% confidence interval for each signature. 
+
+**Conclusion**  
+
+<div class = "box">
+
+In evaluating the discriminative power of the 20-Gene Notch signature in comparison to the other signatures, our ROC analysis revealed a low, but consistent degree of classification accuracy with an AUC of 0.56 (0.52-0.61) when distinguishing between samples with “Notch-core activating alterations” and “Notch-core wild-type” cases. 
+
+The Notch 20-gene signature's and all other signature’s moderate performance in classifying Notch activation status reflects the complexity of the pathway's regulation and the multifaceted nature of its genetic aberrations. While the direct effects of chemical modulators on gene expression would provide a dynamic and potentially more accurate reflection of pathway activity, the integration of static genomic data—encompassing copy number alterations, structural variants, and mutations—offers a more accessible but indirect measure of the cumulative impact on the Notch signaling cascade. This approach, although a proxy, can still provide valuable insights, especially in the absence of temporal expression data, and may capture the long-term regulatory consequences of genomic alterations on pathway functionality. 
+
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes], `ggpubr` [@R-ggpubr], `ggrepel` [@R-ggrepel] and `ggnewscale` [@R-ggnewscale].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT].  
+
+**Statistics**  
+Statistics where calculated using the `rstatix` package [@R-rstatix].  
+
+# Load Data
+
+Load only necessary data to allow these analyses:  
+
+```{r 02-load_previous_data}
+
+base::load("../RData/Part7a.RData")
+
+```
+
+# Correlation of signatures to tumor purity / immune infiltration
+
+## Load clinical data sets
+
+### Data Sources
+
+```{r 03-data_sources, cache=TRUE}
+
+cbioportal_NOTCH1_4_and_ligands_oncoprint <- read_delim("~/Projects 2023/notch-project-github-upload/data/cbioportal_NOTCH1_4_and_ligands_oncoprint.tsv", 
+    delim = "\t", escape_double = FALSE, 
+    trim_ws = TRUE)
+
+# Add more Data Sources
+Data_Sources <- data.frame(Type = "TCGA - Expression Data",
+                           Source = format_category(expr_xena_tcga_source),
+                           Measurement = format_category(expr_xena_tcga_measurement)
+  )
+
+knitr::kable(Data_Sources,
+             format = "html", 
+             escape = F) %>%
+  kableExtra::row_spec(1:nrow(Data_Sources), underline = F, extra_css = "border-bottom: 1px solid;") %>%
+  kableExtra::kable_classic_2(full_width = F)
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+```
+
+## Correlation of the NOTCH copy number status to gene expression
+
+```{r fig.height=3, fig.width=8}
+cbioportal_NOTCH1_4_and_ligands_oncoprint_long <- cbioportal_NOTCH1_4_and_ligands_oncoprint %>% 
+  tidyr::pivot_longer(-c(1,2),
+                      names_to = "id_patient_id",
+                      values_to = "alteration") %>% 
+  tidyr::pivot_wider(names_from = "track_name",
+                     values_from = "alteration")
+
+
+cbioportal_NOTCH1_4_and_ligands_oncoprint_long_clinical <- cbioportal_NOTCH1_4_and_ligands_oncoprint_long %>% 
+  dplyr::filter(track_type == "CLINICAL")
+
+
+cbioportal_NOTCH1_4_and_ligands_oncoprint_long <- cbioportal_NOTCH1_4_and_ligands_oncoprint_long %>% 
+  dplyr::filter(!track_type %in% c("CLINICAL")) %>%
+  dplyr::select(-c("Profiled in Putative copy-number alterations from GISTIC",
+                                  "Profiled in Structural variants", "Profiled in Mutations")) %>% 
+  dplyr::left_join(cbioportal_NOTCH1_4_and_ligands_oncoprint_long_clinical %>% 
+                     dplyr::select(id_patient_id, `Profiled in Mutations`) %>% 
+                     dplyr::mutate(track_type = "MUTATIONS")) %>% 
+  dplyr::left_join(cbioportal_NOTCH1_4_and_ligands_oncoprint_long_clinical %>% 
+                     dplyr::select(id_patient_id, `Profiled in Putative copy-number alterations from GISTIC`) %>% 
+                     dplyr::mutate(track_type = "CNA")) %>% 
+  dplyr::left_join(cbioportal_NOTCH1_4_and_ligands_oncoprint_long_clinical %>% 
+                     dplyr::select(id_patient_id, `Profiled in Structural variants`) %>% 
+                     dplyr::mutate(track_type = "STRUCTURAL_VARIANT"))
+
+
+# get wide signature DF
+
+# NOTCH_CORE_SIG_genes_tcga 
+# sig.scores_tcga_published.notch
+# sig.scores_tcga_opt.notch
+
+signatures_genes_wide <- NOTCH_CORE_SIG_genes_tcga %>% 
+  tidyr::pivot_wider(names_from = "id_gene_symbol",
+                     values_from = "quant_scaled_exprs",
+                     names_prefix = "expression_") %>% 
+  dplyr::left_join(sig.scores_tcga_opt.notch %>% 
+                     dplyr::select(id_geneset_name, patient_id, quant_signature) %>% 
+                     dplyr::distinct() %>% 
+                     tidyr::pivot_wider(names_from = "id_geneset_name",
+                                        values_from = "quant_signature")) %>% 
+  dplyr::left_join(sig.scores_tcga_published.notch %>% 
+                     dplyr::select(id_geneset_name, patient_id, quant_signature) %>% 
+                     dplyr::distinct() %>% 
+                     tidyr::pivot_wider(names_from = "id_geneset_name",
+                                        values_from = "quant_signature"))
+  
+
+# analysis:
+
+cnv_profiled_patients <- cbioportal_NOTCH1_4_and_ligands_oncoprint_long %>% 
+  dplyr::filter(track_type == "CNA",
+                `Profiled in Putative copy-number alterations from GISTIC` == "Yes") %>% 
+  dplyr::select(track_type:JAG2) %>%
+  dplyr::inner_join(signatures_genes_wide,
+                    by = c("id_patient_id" = "patient_id")) %>% 
+  dplyr::mutate(across(everything(), .fns = ~replace_na(.,"wt"))) 
+
+mutated_profiled_patients <- cbioportal_NOTCH1_4_and_ligands_oncoprint_long %>% 
+  dplyr::filter(track_type == "MUTATIONS",
+                `Profiled in Mutations` == "Yes") %>% 
+  dplyr::select(track_type:JAG2) %>%
+  dplyr::inner_join(signatures_genes_wide,
+                    by = c("id_patient_id" = "patient_id")) %>% 
+  dplyr::mutate(across(everything(), .fns = ~replace_na(.,"wt"))) 
+
+SV_profiled_patients <- cbioportal_NOTCH1_4_and_ligands_oncoprint_long %>% 
+  dplyr::filter(track_type == "STRUCTURAL_VARIANT",
+                `Profiled in Structural variants` == "Yes") %>% 
+  dplyr::select(track_type:JAG2) %>% 
+  dplyr::inner_join(signatures_genes_wide,
+                    by = c("id_patient_id" = "patient_id")) %>% 
+  dplyr::mutate(across(everything(), .fns = ~replace_na(.,"wt"))) 
+
+```
+
+
+```{r fig.height=3, fig.width=8}
+#### encoding of variables:
+
+# wt as 0 (wild type)
+# Amplification as 1
+# homdel_rec (homozygous deletion) as -1
+# Deep deletions or any other deletion as -1
+# Truncating mutations as -1 (assuming they would have an opposite effect of wild type)
+# Missense Mutation as -1 (ignore activating mutations for now)
+
+encode_cnv_mutation <- function(x) {
+  case_when(
+    x == "wt" ~ 0,
+    x == "Amplification" ~ 1,
+    grepl("homdel|Deep", x) ~ -1,
+    grepl("Truncating|Missense", x) ~ -1, # assuming mutations are deleterious
+    grepl("sv", x) ~ -1, # assuming structural variants are deleterious
+    TRUE ~ NA_real_ # default case to return NA for any unhandled value
+  )
+} 
+
+# Apply the encoding function to your CNV data frame
+df_cnv_encoded <- cnv_profiled_patients %>%
+  dplyr::select(id_patient_id:JAG2) %>% 
+  dplyr::mutate(across(NOTCH1:JAG2, encode_cnv_mutation))
+
+# Apply the encoding function to your mutation data frame
+df_mut_encoded <- mutated_profiled_patients %>%
+  dplyr::select(id_patient_id:JAG2) %>% 
+  dplyr::mutate(across(NOTCH1:JAG2, encode_cnv_mutation))
+
+df_sv_encoded <- SV_profiled_patients %>% 
+  dplyr::select(id_patient_id:JAG2) %>% 
+  dplyr::mutate(across(NOTCH1:JAG2, encode_cnv_mutation))
+
+colnames(df_sv_encoded)[-1] <- paste0(colnames(df_sv_encoded)[-1], "_sv")
+
+# Combining both encoded datasets by summing them to get a composite score
+pathway_status <- df_cnv_encoded %>% 
+  full_join(df_mut_encoded, 
+            by = 'id_patient_id',
+            suffix = c("_cnv", "_mut")) %>%
+  full_join(df_sv_encoded,
+            by = 'id_patient_id') %>% 
+  rowwise() %>%
+  mutate(pathway_score = sum(c_across(-id_patient_id), na.rm = TRUE)) %>%
+  ungroup()
+
+# Define the threshold for classifying pathway status
+pathway_status <- pathway_status %>%
+  mutate(
+    status = case_when(
+      pathway_score > 0  ~ "Notch activation alteration",
+      pathway_score < 0  ~ "Notch inactivation alteration",
+      TRUE ~ "Notch wild type"
+    )
+  )
+
+# signatures tested:
+
+all_signatures_tested <- colnames(signatures_genes_wide %>% dplyr::select(-matches("expression_")))[-1]
+
+# join signature data with the pathway status
+full_data <- pathway_status %>%
+  inner_join(signatures_genes_wide %>% 
+               dplyr::select(-matches("expression_")), 
+             by = c("id_patient_id" = "patient_id"))
+
+# Function to calculate AUC and 95% CI for binary comparisons
+
+calculate_auc_binary_with_ci <- function(gene_signature, status1, status2) {
+
+  binary_data <- full_data %>%
+    filter(status %in% c(status1, status2))
+  
+  # Calculate the ROC curve
+  roc_response <- roc(response = binary_data$status, 
+                      predictor = binary_data[[gene_signature]], 
+                      levels = c(status1, status2), 
+                      direction = "auto")
+  
+  # Calculate the AUC
+  auc_value <- auc(roc_response)
+  
+  # Calculate 95% CI for AUC
+  auc_ci <- ci(roc_response, level = 0.95)
+  
+  # Combine AUC and CI into a data frame
+  data.frame(AUC = as.numeric(auc_value), CI_lower = as.numeric(auc_ci[1]), CI_upper = as.numeric(auc_ci[3]))
+}
+
+
+# Calculate AUC for "Notch activated" vs "Notch wild type"
+auc_results_activated_vs_wt <- sapply(all_signatures_tested, function(signature) {
+  calculate_auc_binary_with_ci(signature, "Notch activation alteration", "Notch wild type")
+}, simplify = FALSE)
+
+# Calculate AUC for "Notch wild type" vs "Notch inactivated"
+auc_results_wt_vs_inactivated <- sapply(all_signatures_tested, function(signature) {
+  calculate_auc_binary_with_ci(signature, "Notch wild type", "Notch inactivation alteration")
+}, simplify = FALSE)
+
+# Calculate AUC for "Notch activation" vs "Notch inactivation alteration"
+auc_results_activated_vs_inactivation <- sapply(all_signatures_tested, function(signature) {
+  calculate_auc_binary_with_ci(signature, "Notch activation alteration", "Notch inactivation alteration")
+}, simplify = FALSE)
+
+
+
+# Output the results in a tidy format
+auc_ci_activated_vs_wt_df <- dplyr::bind_rows(auc_results_activated_vs_wt, .id = "Signature")
+auc_ci_wt_vs_inactivated_df <- dplyr::bind_rows(auc_results_wt_vs_inactivated, .id = "Signature")
+auc_ci_activated_vs_inactivated_df <- dplyr::bind_rows(auc_results_activated_vs_inactivation, .id = "Signature")
+```
+
+```{r fig.height=10, fig.width=10}
+
+combined_auc_analysis <- auc_ci_activated_vs_wt_df %>% 
+  dplyr::mutate(comparison = "Notch-core activating alteration vs Notch-core wild-type") %>% 
+  dplyr::bind_rows(auc_ci_wt_vs_inactivated_df %>% 
+                     dplyr::mutate(comparison = "Notch-core wild-type vs Notch inactivating alteration")) %>%
+  dplyr::bind_rows(auc_ci_activated_vs_inactivated_df %>% 
+                     dplyr::mutate(comparison = "Notch-core activating alteration vs Notch-core inactivating alteration"))
+
+combined_auc_analysis_order_desc <- combined_auc_analysis %>% 
+  dplyr::filter(comparison == "Notch-core activating alteration vs Notch-core wild-type") %>% 
+  arrange(desc(AUC)) %>% 
+  pull(Signature)
+
+n_levels = table(full_data$status)
+
+combined_auc_analysis <- combined_auc_analysis %>% 
+  dplyr::mutate(Signature = factor(combined_auc_analysis$Signature, 
+                                   levels = combined_auc_analysis_order_desc,
+                                   labels = str_replace_all(combined_auc_analysis_order_desc, "\\_", " ")),
+                comparison = factor(comparison, 
+                                    levels = c("Notch-core activating alteration vs Notch-core wild-type",
+                                               "Notch-core wild-type vs Notch inactivating alteration",
+                                               "Notch-core activating alteration vs Notch-core inactivating alteration"),
+                                    labels = c(paste0("Notch-core activating alteration (", 
+                                                      n_levels["Notch activation alteration"],
+                                                      ") vs. Notch-core wild-type (",
+                                                      n_levels["Notch wild type"],
+                                                      ")"),
+                                               paste0("Notch-core wild-type (", 
+                                                      n_levels["Notch wild type"],
+                                                      ") vs. Notch inactivating alteration (",
+                                                      n_levels["Notch inactivation alteration"],
+                                                      ")"),
+                                               paste0("Notch-core activating alteration (", 
+                                                      n_levels["Notch activation alteration"],
+                                                      ") vs. Notch inactivating alteration (",
+                                                      n_levels["Notch inactivation alteration"],
+                                                      ")"))))
+
+
+combined_auc_analysis %>% 
+ ggplot(aes(x = Signature,
+             y = AUC,
+             fill = AUC)) + 
+  facet_wrap(~comparison, ncol = 1) +
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(ymin=CI_lower, 
+                     ymax=CI_upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,0.7),
+                      na.value = merck_colors[1]) +
+  geom_hline(yintercept = 0.5,
+             size = 0.5,
+             linetype = "dashed",
+             color = "darkgrey") +
+  coord_cartesian(ylim = c(min(combined_auc_analysis$CI_lower)*0.9, max(combined_auc_analysis$CI_upper))) +
+  rotate_x_text(angle = 90) +
+  labs(y = "AUC",
+       x = "ID",
+       title = "ROC Analysis",
+       subtitle = "TCGA-BRCA Notch-core alterations, AUC with 95% CI")
+
+```
+
+
+```{r fig.height=12, fig.width=12}
+
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+labels_keep <- stringr::str_wrap(str_replace_all(focus_signatures, "\\_", " "), width = 20)
+
+long_data <- full_data %>%
+  dplyr::select(id_patient_id, status, `Notch 20-Gene Signature`:Xu_2017_MDAMB231_RBPJ_targets) %>% 
+  pivot_longer(
+    cols = -c(id_patient_id, status),
+    names_to = "Signature",
+    values_to = "Score"
+  ) 
+
+long_data <- long_data %>% 
+  dplyr::mutate(status = factor(status, 
+                                levels = unique(long_data$status)[c(3,1,2)]),
+                Signature = stringr::str_wrap(str_replace_all(Signature, "\\_", " "), width = 20))
+
+# Perform the pairwise comparisons
+pairwise_comparisons <- long_data %>%
+  group_by(Signature) %>%
+  pairwise_t_test(Score ~ status, p.adjust.method = "bonferroni") 
+
+
+wb <- openxlsx::createWorkbook()
+
+openxlsx::addWorksheet(wb, "cBioportal Alterations")
+openxlsx::writeData(wb, 
+                    sheet = "cBioportal Alterations", 
+                    cbioportal_NOTCH1_4_and_ligands_oncoprint)
+
+openxlsx::addWorksheet(wb, "Alterations Matrix")
+openxlsx::writeData(wb, 
+                    "Alterations Matrix", 
+                    full_data)
+
+openxlsx::addWorksheet(wb, "ROC analysis")
+openxlsx::writeData(wb, 
+                    "ROC analysis", 
+                    combined_auc_analysis %>% 
+                      dplyr::relocate(comparison, .before = "Signature"))
+
+openxlsx::addWorksheet(wb, "Pairwise Comparisons")
+openxlsx::writeData(wb, 
+                    "Pairwise Comparisons", 
+                    pairwise_comparisons)
+
+# Save the workbook
+openxlsx::saveWorkbook(wb, "../results/TCGA_ROC_analysis.xlsx", overwrite = TRUE)
+
+
+
+long_data_focus <- long_data %>% 
+  dplyr::filter(Signature %in% !!labels_keep)
+
+# Plotting the signature score by NOTCH activation status
+p <- long_data_focus %>% 
+ggplot(aes(x = status, y = Score, fill = status)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 0.5, alpha = 0.4) +
+  facet_wrap(~Signature) + 
+  #stat_compare_means(comparisons = list(c(1,2), c(2,3), c(1,3))) +
+  theme_minimal() +
+  theme(#legend.position = "none") +
+    axis.text.x=element_blank()) +
+  labs(x = "NOTCH Activation Status", 
+       y = "Signature Score", 
+       title = "Signature Scores by NOTCH-core Gene Status") +
+  scale_fill_manual(values = merck_colors[c(2,3,1)])
+
+p
+
+```
+
+```{r}
+
+# Plotting the signature score by NOTCH activation status
+p <- long_data_focus %>% 
+  dplyr::filter(grepl("^Notch 20", Signature)) %>% 
+ggplot(aes(x = status, y = Score, fill = status)) +
+  geom_boxplot(outlier.shape = NA) +
+  geom_jitter(width = 0.2, size = 1, alpha = 0.4) +
+  #facet_wrap(~Signature) + 
+  stat_compare_means(comparisons = list(c(1,2), c(2,3), c(1,3))) +
+  theme_minimal() +
+  theme(#legend.position = "none") +
+    axis.text.x=element_blank()) +
+  labs(x = "NOTCH Activation Status", 
+       y = "Notch 20-Gene\nSignature Score", 
+       title = "Signature Scores by NOTCH-core Gene Status") +
+  scale_fill_manual(values = merck_colors[c(2,3,1)])
+
+p
+```
+
+
+
+
+
+
+
+
+ 
+
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+```

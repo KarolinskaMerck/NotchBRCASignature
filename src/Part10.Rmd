@@ -1,0 +1,304 @@
+---
+title: "Project: Identification of a Notch transcriptomic signature for breast cancer"
+subtitle: "Part 10 - Heatmaps for BEAUTY and PROMIX cohort"
+author: "Computational Oncology: Felix Geist"
+date: "`r Sys.Date()`"
+output: 
+  html_document:
+    theme: flatly
+    highlight: tango
+    fig_caption: TRUE
+    number_sections: FALSE
+    code_folding: hide
+    toc: TRUE
+    toc_depth: 1
+    toc_float:
+      collapsed: FALSE
+      smooth_scroll: FALSE
+bibliography: "`r here::here('src', 'part10.bib')`"
+link-citations: true
+biblio-style: "apalike"
+---
+
+```{r 00_setup, include=FALSE}
+
+knitr::opts_chunk$set(
+	fig.height = 4,                  # 4 inch high, 6 inch wide
+	fig.width = 6,
+	dpi = 300,                       
+	dev = c("svg"),                  
+	fig.align = "center",
+	# fig.path = "../Figures/Part10/",           
+	message = FALSE,
+	warning = FALSE,
+	echo = TRUE,                     
+	cache = TRUE                    
+)
+```
+
+```{css, echo=FALSE}
+
+text {
+  font-family: sans-serif;
+}
+
+h1, .h1, h2, .h2, h3, .h3 {
+    margin-top: 0.5em;
+}
+
+div.box { 
+  background-color:#EEEEEE; 
+  border: 2px solid #0F69AF;
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+div.obs { 
+  background-color:white; 
+  border: 2px solid #0F69AF; 
+  border-radius: 10px; 
+  padding: 1em 1em 1em 4em;
+  margin: 1em 0 1em 0;
+}
+
+body, td {
+   font-size: 14px;
+}
+code.r{
+  font-size: 12px;
+}
+pre {
+  font-size: 14px
+}
+
+img {
+    max-width: 80%;
+}
+```
+
+```{r 01-packages, echo=TRUE, message=FALSE, warning=FALSE, results='hide'}
+
+library(tidyverse)
+
+library(readxl)
+library(readr)
+library(xlsx)
+library(knitr)
+library(kableExtra)
+
+library(ggplot2)
+library(ggpubr)
+library(ggrepel)
+
+library(circlize)
+library(ggthemes)
+library(ComplexHeatmap)
+library(rmarkdown)
+library(DT)
+
+library(viridis)
+
+# Citations:
+knitr::write_bib(file = '../src/part10.bib')
+
+# color schema
+
+merck_colors <- ggthemes::tableau_color_pal("Color Blind")(10)
+
+merck_colors_ext <- colorRamp2(seq(from = 1, to = 40, by = 4), merck_colors[1:10])
+
+subtype_colors <- merck_colors[c(5,9,6)]
+names(subtype_colors) <- c("basal", "her2", "luma")
+
+all_subtype_colors <- c(subtype_colors, c("lumb" = as.character(merck_colors[4])))
+
+time_colors <- merck_colors[c(10,7)]
+names(time_colors) <- c("8h", "72h")
+
+treatment_colors <- merck_colors[c(1,2,3,4)]
+names(treatment_colors) <- c("Notch on", "Notch off", "ground state","Notch on/off")
+
+batch_colors <- merck_colors[c(5,9)]
+names(batch_colors) <- c("Validation", "Training")
+
+col_heatmap <- c(merck_colors[1], "white", merck_colors[6])
+col_heatmap_not0 <- c(merck_colors[1], merck_colors[3], merck_colors[6])
+
+theme_set(theme_bw())
+
+# heatmap colors:
+
+options(knitr.kable.NA = '')   # This replaces NA in knitr tables to an empty string
+
+```
+
+**Research Questions**
+
+<div class = "box">
+
+We want to identify general applicable signatures for the activation and inactivation of the NOTCH pathway. Therefore, we treated triple negative breast cancer cell lines either with the gamma-secretase inhibitor DAPT or cultivated the cells on immobilized NOTCH ligand Jagged1. Subsequently, the cells were harvested after 8h or 72h of incubation time and their transcriptome analyzed by RNASeq.  
+
+Here, we want to visualize the GSVA signature scores for the various conditions we obtained from our collaboration partners.
+</div>
+
+# Methods and Data Sources
+
+## Methods
+
+**Platform and Report**  
+
+The analysis was performed using R `r paste(R.Version()[c("major", "minor")], collapse = ".")` [@R-base] with the extension of the `tidyverse` [@R-tidyverse; @tidyverse2019] (dplyr, forcats, ggplot2, purrr, readr, stringr, tibble, tidyr).   
+The report was generated using `Rmarkdown` [@R-rmarkdown; @rmarkdown2018; @rmarkdown2020] and `knitr` [@R-knitr; @knitr2014; @knitr2015].  
+
+**Visualization**  
+Plots are drawn by `ggplot2`, `ggthemes` [@R-ggthemes] and `ggpubr` [@R-ggpubr].  
+Tables are drawn, using the `knitr` package, together with `kableExtra` styling [@R-kableExtra]. Interactive Tables are integrated using the `DT` package [@R-DT]. Heatmaps are drawn using the `ComplexHeatmap` package [@R-ComplexHeatmap; @ComplexHeatmap2016].     
+
+# Heatmap Visualizations
+
+## BEAUTY
+
+```{r fig.height=9, fig.width=12}
+
+GSVA_score_BEAUTY_averaged_pre_post <- read_delim("../data/Promix Beauty/GSVA_score_BEAUTY_averaged_pre_post.csv", 
+    delim = ";", escape_double = FALSE, trim_ws = TRUE)
+
+
+GSVA_score_BEAUTY_TNBC_resp_vs_no_resp <- read_delim("../data/Promix Beauty/GSVA_score_BEAUTY_TNBC_resp_vs_no_resp.csv", 
+    delim = ";", escape_double = FALSE, locale = locale(decimal_mark = ",", 
+        grouping_mark = "."), trim_ws = TRUE)
+
+```
+
+### GSVA score BEAUTY averaged pre and post treatment
+
+```{r fig.width=7, fig.height=10}
+
+GSVA_score_BEAUTY_averaged_pre_post <- GSVA_score_BEAUTY_averaged_pre_post %>% 
+  dplyr::mutate(Signature_name  = str_replace_all(Signature_name  , "\\_", " "),
+                Signature_name = ifelse(Signature_name == "X20 GENE NOTCH SIG", "20-Gene Notch signature", Signature_name)) %>% 
+  column_to_rownames("Signature_name")
+
+colnames(GSVA_score_BEAUTY_averaged_pre_post) <- str_replace_all(colnames(GSVA_score_BEAUTY_averaged_pre_post), "\\_", " ")
+
+col_fun = colorRamp2(c(-0.75,0,0.75), col_heatmap)
+
+ht <- ComplexHeatmap::Heatmap(GSVA_score_BEAUTY_averaged_pre_post,
+                              clustering_method_rows = "complete",
+                        #cluster_columns = FALSE,
+                        #cluster_rows = FALSE,
+                        column_split = factor(rep(c("Pre-Treatment", "Post-Treatment"), 4),
+                                              levels = c("Pre-Treatment", "Post-Treatment")),
+                        cluster_column_slices = FALSE,
+                        row_names_gp = gpar(fontsize = 8,
+                                            fontface = ifelse(grepl("20-Gene", rownames(GSVA_score_BEAUTY_averaged_pre_post)), "bold.italic", "plain")),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Mean Signature Score",
+                                                    direction = "horizontal",
+                                                    title_position = "lefttop"),
+                        rect_gp = gpar(col = "black", lwd = 0.5),
+                        column_gap = unit(3, "mm"))
+
+draw(ht, heatmap_legend_side = "bottom")
+
+```
+
+
+### GSVA score BEAUTY averaged pre and post treatment
+
+```{r fig.width=4.5, fig.height=10}
+
+GSVA_score_BEAUTY_TNBC_resp_vs_no_resp <- GSVA_score_BEAUTY_TNBC_resp_vs_no_resp %>% 
+  dplyr::mutate(Signature_name  = str_replace_all(Signature_name  , "\\_", " "),
+                Signature_name = ifelse(Signature_name == "X20 GENE NOTCH SIG", "20-Gene Notch signature", Signature_name)) %>% 
+  column_to_rownames("Signature_name")
+
+colnames(GSVA_score_BEAUTY_TNBC_resp_vs_no_resp) <- str_replace_all(colnames(GSVA_score_BEAUTY_TNBC_resp_vs_no_resp), "\\_", " ")
+
+col_fun = colorRamp2(c(-0.75,0,0.75), col_heatmap)
+
+ht <- ComplexHeatmap::Heatmap(GSVA_score_BEAUTY_TNBC_resp_vs_no_resp,
+                              clustering_method_rows = "complete",
+                        #cluster_columns = FALSE,
+                        #cluster_rows = FALSE,
+                        # column_split = factor(rep(c("Pre-Treatment", "Post-Treatment"), 4),
+                        #                       levels = c("Pre-Treatment", "Post-Treatment")),
+                        # cluster_column_slices = FALSE,
+                        row_names_gp = gpar(fontsize = 8,
+                                            fontface = ifelse(grepl("20-Gene", rownames(GSVA_score_BEAUTY_TNBC_resp_vs_no_resp)), "bold.italic", "plain")),
+                        col = col_fun,
+                        heatmap_legend_param = list(title = "Mean Signature Score",
+                                                    direction = "horizontal",
+                                                    title_position = "lefttop"),
+                        rect_gp = gpar(col = "black", lwd = 0.5),
+                        column_gap = unit(3, "mm"))
+
+draw(ht, heatmap_legend_side = "bottom")
+
+```
+
+
+## PROMIX
+
+```{r fig.height=9, fig.width=12}
+
+Promix_for_heatmap_paired_baseline_vs_cycle2 <- read_delim("~/Projects 2023/notch-project-github-upload/data/Promix Beauty/Promix_for_heatmap_paired_baseline_vs_cycle2.txt", 
+    delim = "\t", escape_double = FALSE, 
+    locale = locale(decimal_mark = ",", grouping_mark = "."), 
+    trim_ws = TRUE)
+
+
+colnames(Promix_for_heatmap_paired_baseline_vs_cycle2)[1] <- "Signature_name"
+
+```
+
+### PROMIX baseline vs. cycle2
+
+```{r fig.width=9, fig.height=10}
+
+Promix_for_heatmap <- Promix_for_heatmap_paired_baseline_vs_cycle2 %>% 
+  dplyr::mutate(Signature_name  = str_replace_all(Signature_name  , "\\_", " "),
+                Signature_name = ifelse(Signature_name == "Urban 20 GENE NOTCH SIG", "20-Gene Notch Signature", Signature_name)) %>% 
+  column_to_rownames("Signature_name")
+
+colnames(Promix_for_heatmap) <- str_replace_all(colnames(Promix_for_heatmap), "\\_", " ")
+
+col_fun = colorRamp2(c(-0.75,0,0.75), col_heatmap)
+
+ht <- ComplexHeatmap::Heatmap(Promix_for_heatmap,
+                              clustering_method_rows = "complete",
+                        cluster_columns = FALSE,
+                        #cluster_rows = FALSE,
+                        column_split = factor(rep(c("TNBC", "LumA", "LumB"), each = 2),
+                                              levels = c("TNBC", "LumA", "LumB")),
+                        cluster_column_slices = FALSE,
+                        row_names_gp = gpar(fontsize = 12,
+                                            fontface = ifelse(grepl("20-Gene", rownames(Promix_for_heatmap)), "bold.italic", "plain")),
+                        col = col_fun,
+                        row_names_max_width = max_text_width(
+                          rownames(Promix_for_heatmap), 
+                          gp = gpar(fontsize = 12)
+                        ),
+                        heatmap_legend_param = list(title = "Mean Signature Score",
+                                                    direction = "horizontal",
+                                                    title_position = "lefttop"),
+                        rect_gp = gpar(col = "black", lwd = 0.5),
+                        column_gap = unit(3, "mm"))
+
+draw(ht, heatmap_legend_side = "bottom")
+
+```
+
+
+
+# References {.unlisted .unnumbered}
+
+<div id="refs"></div>
+
+# Appendix {.unlisted .unnumbered}
+  
+```{r SessionInfo}
+pander::pander(sessionInfo())
+
+```

@@ -83,6 +83,7 @@ library(tidyverse)
 
 library(readxl)
 library(xlsx)
+library(openxlsx)
 library(knitr)
 library(kableExtra)
 
@@ -94,6 +95,8 @@ library(cowplot)
 library(circlize)
 library(ggthemes)
 library(ComplexHeatmap)
+
+library(cowplot)
 
 library(rmarkdown)
 library(DT)
@@ -156,8 +159,9 @@ We want to identify general applicable signatures for the activation and inactiv
 
 1. Correlation of the public and study derived signatures in public data sets to tumor purity / immune infiltration.
 2. Testing of the PAM50-subtypes and Hormone-Receptor status against the signatures
-3. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
-4. Understand the relation of the signatures against each other.  
+3. Testing the correlation of each of the signatures against the NOTCH-receptor/ligand expression levels
+4. Combining all measures to identify the best signature to stratify for Notch activation in breast cancer
+5. Understand the relation of the signatures against each other.  
 
 **Conclusion**  
 
@@ -584,8 +588,438 @@ sig.scores_oslo2_opt.notch <- map_dfr(gs.list.opt_notch, ~signature_score(.x, df
             by = c("patient_id" = "id_patient_id")) %>% 
   dplyr::distinct()
 
+##### calculate separately the NOTCH Core signature
+
+NOTCH_CORE_SIG_genes <- list(NOTCH_CORE_SIG = c("NOTCH1", "NOTCH2", "NOTCH3", "NOTCH4", "DLL1", "DLL3", "DLL4", "JAG1", "JAG2")) 
+sig.notch_core.tcga <- map_dfr(NOTCH_CORE_SIG_genes, ~signature_score(.x, df = expr_xena_tcga_tmm), .id = "id_geneset_name") %>% 
+  left_join(phe_tcga,
+            by = c("patient_id" = "id_tcga_participant_barcode")) %>% 
+  dplyr::distinct()
+
+sig.notch_core.metabric <- map_dfr(NOTCH_CORE_SIG_genes, ~signature_score(.x, df = expr_cbioportal_metabric), .id = "id_geneset_name") %>% 
+  left_join(phe_cbioportal_metabric,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+sig.notch_core.oslo2 <- map_dfr(NOTCH_CORE_SIG_genes, ~signature_score(.x, df = expr_gse80999_oslo2), .id = "id_geneset_name") %>% 
+  left_join(phe_gse80999_oslo2,
+            by = c("patient_id" = "id_patient_id")) %>% 
+  dplyr::distinct()
+
+NOTCH_CORE_SIG_genes_tcga <- expr_xena_tcga_tmm %>% 
+  dplyr::filter(id_gene_symbol %in% !!unlist(NOTCH_CORE_SIG_genes))
+
+NOTCH_CORE_SIG_genes_METABRIC <- expr_cbioportal_metabric %>% 
+  dplyr::filter(id_gene_symbol %in% !!unlist(NOTCH_CORE_SIG_genes))
+
+NOTCH_CORE_SIG_genes_Oslo2 <- expr_gse80999_oslo2 %>% 
+  dplyr::filter(id_gene_symbol %in% !!unlist(NOTCH_CORE_SIG_genes))
+
+
+# core signature:
+
+patient_characteristics <- sig.scores_tcga_opt.notch %>% 
+  dplyr::select(-id_geneset_name, -quant_signature) %>% 
+  dplyr::distinct() %>% 
+  dplyr::mutate(dataset = "TCGA") %>% 
+  dplyr::relocate(dataset, .before = "patient_id") %>% 
+  dplyr::bind_rows(sig.scores_metabric_opt.notch %>% 
+    dplyr::select(-id_geneset_name, -quant_signature) %>% 
+    dplyr::distinct() %>% 
+    dplyr::mutate(dataset = "METABRIC") %>% 
+    dplyr::relocate(dataset, .before = "patient_id")) %>% 
+  dplyr::bind_rows(sig.scores_oslo2_opt.notch %>% 
+    dplyr::select(-id_geneset_name, -quant_signature) %>% 
+    dplyr::distinct() %>% 
+    dplyr::mutate(dataset = "Oslo2") %>% 
+    dplyr::relocate(dataset, .before = "patient_id"))
+
+all_signature_scores <- sig.scores_tcga_opt.notch %>% 
+  dplyr::bind_rows(sig.notch_core.tcga) %>% 
+  dplyr::bind_rows(sig.scores_tcga_published.notch) %>% 
+  dplyr::select(id_geneset_name, patient_id, quant_signature) %>% 
+  dplyr::distinct() %>% 
+  tidyr::pivot_wider(names_from = "id_geneset_name",
+                     values_from = "quant_signature") %>% 
+  dplyr::mutate(dataset = "TCGA") %>% 
+  dplyr::relocate(dataset, .before = "patient_id") %>% 
+  dplyr::bind_rows(sig.scores_metabric_opt.notch %>% 
+                     dplyr::bind_rows(sig.notch_core.metabric) %>% 
+                     dplyr::bind_rows(sig.scores_metabric_published.notch) %>% 
+                     dplyr::select(id_geneset_name, patient_id, quant_signature) %>% 
+                     dplyr::distinct() %>% 
+                     tidyr::pivot_wider(names_from = "id_geneset_name",
+                                        values_from = "quant_signature") %>% 
+                     dplyr::mutate(dataset = "METABRIC") %>% 
+                     dplyr::relocate(dataset, .before = "patient_id")) %>% 
+  dplyr::bind_rows(sig.scores_oslo2_opt.notch %>% 
+                     dplyr::bind_rows(sig.notch_core.oslo2) %>% 
+                     dplyr::bind_rows(sig.scores_oslo2_published.notch) %>% 
+                     dplyr::select(id_geneset_name, patient_id, quant_signature) %>% 
+                     dplyr::distinct() %>% 
+                     tidyr::pivot_wider(names_from = "id_geneset_name",
+                                        values_from = "quant_signature") %>% 
+                     dplyr::mutate(dataset = "Oslo2") %>% 
+                     dplyr::relocate(dataset, .before = "patient_id"))
+   
+wb <- openxlsx::loadWorkbook("../results/signature_scores.xlsx")
+
+openxlsx::addWorksheet(wb, "Public Patient Samples")
+openxlsx::writeData(wb, 
+                    sheet = "Public Patient Samples", 
+                    all_signature_scores)
+
+openxlsx::addWorksheet(wb, "Public Patient Characteristics")
+openxlsx::writeData(wb, 
+                    sheet = "Public Patient Characteristics", 
+                    patient_characteristics)
+
+# Save the workbook
+openxlsx::saveWorkbook(wb, "../results/signature_scores.xlsx", overwrite = TRUE)
+
 rm(expr_xena_tcga_tmm, expr_cbioportal_metabric, expr_gse80999_oslo2)
 ```
+
+## Correlation of the signatures to the NOTCH Core Signature
+
+```{r fig.height=3, fig.width=8}
+
+tcga_core_signature_correlation <- sig.notch_core.tcga %>% 
+  bind_rows(sig.scores_tcga_opt.notch) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  pivot_wider(names_from = "id_geneset_name",
+              values_from = "quant_signature")
+
+p1 <- tcga_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = `Notch 20-Gene Signature`)) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "TCGA-BRCA") + 
+  stat_cor(method = "pearson", label.x = -1.7, label.y = 2,
+           p.accuracy = 0.001, r.accuracy = 0.01,
+           size = 3)
+
+metabric_core_signature_correlation <- sig.notch_core.metabric %>% 
+  bind_rows(sig.scores_metabric_opt.notch) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  pivot_wider(names_from = "id_geneset_name",
+              values_from = "quant_signature")
+
+p2 <- metabric_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = `Notch 20-Gene Signature`)) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "METABRIC") + 
+  stat_cor(method = "pearson", label.x = -1.3, label.y = 2,
+           p.accuracy = 0.001, r.accuracy = 0.01,
+           size = 3)
+  
+oslo2_core_signature_correlation <- sig.notch_core.oslo2 %>% 
+  bind_rows(sig.scores_oslo2_opt.notch) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  pivot_wider(names_from = "id_geneset_name",
+              values_from = "quant_signature")
+
+p3 <- oslo2_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = `Notch 20-Gene Signature`)) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "Oslo2") + 
+  stat_cor(method = "pearson", label.x = -1.5, label.y = 0.8,
+           p.accuracy = 0.001, r.accuracy = 0.01,
+           size = 3)
+
+
+plot_grid(p1,p2,p3, nrow = 1)
+
+```
+
+```{r fig.height=15, fig.width=12}
+# 
+# sig.notch_core.tcga 
+# sig.notch_core.metabric 
+# sig.notch_core.oslo2
+# 
+# NOTCH_CORE_SIG_genes_tcga
+# NOTCH_CORE_SIG_genes_METABRIC
+# NOTCH_CORE_SIG_genes_Oslo2
+# 
+# # TCGA correlations
+# 
+# sig.scores_tcga_published.notch
+# sig.scores_tcga_opt.notch 
+# 
+# sig.scores_metabric_published.notch
+# sig.scores_metabric_opt.notch
+# 
+# sig.scores_oslo2_published.notch
+# sig.scores_oslo2_opt.notch
+
+# all together
+
+tcga_core_signature_correlation <- sig.notch_core.tcga %>% 
+  dplyr::rename(`NOTCH CORE SIG` = quant_signature) %>% 
+  dplyr::select(-id_geneset_name) %>% 
+  dplyr::left_join(sig.scores_tcga_published.notch %>% 
+    dplyr::bind_rows(sig.scores_tcga_opt.notch)) %>%
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(id_geneset_name = paste(strwrap(id_geneset_name, 30), collapse = '\n'))
+    
+tcga_core_signature_correlation_padj <- tcga_core_signature_correlation %>%
+  group_by(id_geneset_name) %>%
+ cor_test(`NOTCH CORE SIG`, quant_signature) %>% 
+  rstatix::adjust_pvalue() %>% 
+  rstatix::add_significance() %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(p_level = ifelse(p.adj < 0.001, "<0.001", paste0("= ", signif(p.adj, digits = 2))))
+
+
+tcga_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = quant_signature)) +
+  facet_wrap(~ id_geneset_name,
+             ncol = 8) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "TCGA-BRCA",
+       x = "Signature Score") + 
+  geom_text(data = tcga_core_signature_correlation_padj,
+            aes(y = -3.5,
+                x = -3.5,
+                label = paste("R =", signif(cor, digits = 2), "; p", p_level)),
+            size = 2.5,
+            vjust = 0.5,
+            hjust = 0) +
+  theme(strip.text.x = element_text(size = 5))
+
+
+metabric_core_signature_correlation <- sig.notch_core.metabric %>% 
+  dplyr::rename(`NOTCH CORE SIG` = quant_signature) %>% 
+  dplyr::select(-id_geneset_name) %>% 
+  dplyr::left_join(sig.scores_metabric_published.notch %>%  
+    dplyr::bind_rows(sig.scores_metabric_opt.notch)) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(id_geneset_name = paste(strwrap(id_geneset_name, 30), collapse = '\n'))
+  
+metabric_core_signature_correlation_padj <- metabric_core_signature_correlation %>%
+  group_by(id_geneset_name) %>%
+ cor_test(`NOTCH CORE SIG`, quant_signature) %>% 
+  rstatix::adjust_pvalue() %>% 
+  rstatix::add_significance() %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(p_level = ifelse(p.adj < 0.001, "<0.001", paste0("= ", signif(p.adj, digits = 2))))
+
+
+metabric_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = quant_signature)) +
+  facet_wrap(~ id_geneset_name,
+             ncol = 8) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "Metabric",
+       x = "Signature Score") + 
+  geom_text(data = metabric_core_signature_correlation_padj,
+            aes(y = -2.5,
+                x = -1.5,
+                label = paste("R =", signif(cor, digits = 2), "; p", p_level)),
+            size = 2.5,
+            vjust = 0.5,
+            hjust = 0) +
+  theme(strip.text.x = element_text(size = 5))
+
+
+
+oslo2_core_signature_correlation <- sig.notch_core.oslo2 %>% 
+  dplyr::rename(`NOTCH CORE SIG` = quant_signature) %>% 
+  dplyr::select(-id_geneset_name) %>% 
+  dplyr::left_join(sig.scores_oslo2_published.notch %>% 
+    dplyr::bind_rows(sig.scores_oslo2_opt.notch)) %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  dplyr::rowwise() %>% 
+  dplyr::mutate(id_geneset_name = paste(strwrap(id_geneset_name, 30), collapse = '\n'))
+  
+oslo2_core_signature_correlation_padj <- oslo2_core_signature_correlation %>%
+  group_by(id_geneset_name) %>%
+ cor_test(`NOTCH CORE SIG`, quant_signature) %>% 
+  rstatix::adjust_pvalue() %>% 
+  rstatix::add_significance() %>% 
+  dplyr::ungroup() %>% 
+  dplyr::mutate(p_level = ifelse(p.adj < 0.001, "<0.001", paste0("= ", signif(p.adj, digits = 2))))
+
+oslo2_core_signature_correlation %>% 
+  ggplot(aes(y = `NOTCH CORE SIG`,
+             x = quant_signature)) +
+  facet_wrap(~ id_geneset_name,
+             ncol = 8) +
+  geom_point(alpha = 0.5,
+             shape = 21,
+             fill = "grey") +
+  geom_smooth(method = "lm",
+              color = merck_colors[1]) +
+  labs(title = "Oslo2",
+       x = "Signature Score") + 
+  geom_text(data = oslo2_core_signature_correlation_padj,
+            aes(y = -1,
+                x = -1.5,
+                label = paste("R =", signif(cor, digits = 2), "; p", p_level)),
+            size = 2.5,
+            vjust = 0.5,
+            hjust = 0) +
+  theme(strip.text.x = element_text(size = 5))
+
+```
+
+```{r correlation_core_signature_heatmap, fig.height=15, fig.width=12}
+
+# get R values for all, heatmap
+
+core_signature_correlation_heatmap <- tcga_core_signature_correlation_padj %>% 
+  dplyr::select(id_geneset_name, cor) %>% 
+  dplyr::mutate(dataset = "TCGA-BRCA") %>% 
+  full_join(metabric_core_signature_correlation_padj %>% 
+    dplyr::select(id_geneset_name, cor) %>% 
+    dplyr::mutate(dataset = "Metabric")) %>% 
+  full_join(oslo2_core_signature_correlation_padj %>% 
+    dplyr::select(id_geneset_name, cor) %>% 
+    dplyr::mutate(dataset = "Oslo2")) %>% 
+  pivot_wider(names_from = "dataset",
+              values_from = "cor") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\n", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% t()
+
+core_signature_correlation_heatmap_padj <- tcga_core_signature_correlation_padj %>% 
+  dplyr::select(id_geneset_name, p.adj) %>% 
+  dplyr::mutate(dataset = "TCGA-BRCA") %>% 
+  full_join(metabric_core_signature_correlation_padj %>% 
+    dplyr::select(id_geneset_name, p.adj) %>% 
+    dplyr::mutate(dataset = "Metabric")) %>% 
+  full_join(oslo2_core_signature_correlation_padj %>% 
+    dplyr::select(id_geneset_name, p.adj) %>% 
+    dplyr::mutate(dataset = "Oslo2")) %>% 
+  pivot_wider(names_from = "dataset",
+              values_from = "p.adj") %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\n", " ")) %>% 
+  column_to_rownames("id_geneset_name") %>% t()
+
+core_signature_correlation_heatmap_class <- core_signature_correlation_heatmap_padj
+
+core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj > 0.05] <- "ns"
+#core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj < 0.01] <- "**"
+#core_signature_correlation_heatmap_class[core_signature_correlation_heatmap_padj < 0.001] <- "***"
+
+col_fun = colorRamp2(c(-1, 0, 1), c(merck_colors[1], "white", merck_colors[2]))
+
+ComplexHeatmap::Heatmap(core_signature_correlation_heatmap, 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Correlation of NOTCH signatures in clinical patient cohorts to the NOTCH Core Signature",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(core_signature_correlation_heatmap)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(core_signature_correlation_heatmap), 
+                          gp = gpar(fontsize = 8)
+                          ),
+                        height = unit(5, "mm")*nrow(core_signature_correlation_heatmap),
+                        heatmap_legend_param = list(
+                          title = "Correlation Coefficient", at = c(-1, 0, 1)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(core_signature_correlation_heatmap_padj[i, j] > 0.05){
+                            grid.text(core_signature_correlation_heatmap_class[i, j], x, y, gp = gpar(fontsize = 7))
+                          }
+                        })
+
+
+```
+
+```{r correlation_core_signature_heatmap_focus, fig.width=8, fig.height=7}
+# signatures to show:
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+labels_keep <- str_replace_all(focus_signatures, "\\_", " ")
+
+ComplexHeatmap::Heatmap(core_signature_correlation_heatmap[,colnames(core_signature_correlation_heatmap) %in% labels_keep], 
+                        name = "mat", 
+                        rect_gp = gpar(col = "white", lwd = 2),
+                        column_title = "Correlation of NOTCH signatures in\nclinical patient cohorts to the NOTCH Core Signature",
+                        column_names_gp = gpar(fontsize = 8,
+                                               fontface = ifelse(grepl("Notch 20", colnames(core_signature_correlation_heatmap)), "bold.italic", "plain")),
+                        column_names_max_height = max_text_width(
+                          colnames(core_signature_correlation_heatmap), 
+                          gp = gpar(fontsize = 8)
+                          ),
+                        height = unit(5, "mm")*nrow(core_signature_correlation_heatmap),
+                        heatmap_legend_param = list(
+                          title = "Correlation Coefficient", at = c(-1, 0, 1)
+                          ),
+                        col = col_fun,
+                        cell_fun = function(j, i, x, y, width, height, fill) {
+                          if(core_signature_correlation_heatmap_padj[,colnames(core_signature_correlation_heatmap_padj) %in% labels_keep][i, j] > 0.05){
+                            grid.text(core_signature_correlation_heatmap_class[,colnames(core_signature_correlation_heatmap_class) %in% labels_keep][i, j], x, y, gp = gpar(fontsize = 7))
+                          }
+                        })
+
+
+
+## save data as excel - append to cell lines
+
+xlsx::write.xlsx(tcga_core_signature_correlation_padj,
+                 file = "../results/Table_S8_cor_signatures_to_core_signature.xlsx",
+                 sheet = "patients_TCGA_BRCA",
+                 append = TRUE)
+
+xlsx::write.xlsx(metabric_core_signature_correlation_padj,
+                 file = "../results/Table_S8_cor_signatures_to_core_signature.xlsx",
+                 sheet = "patients_METABRIC",
+                 append = TRUE)
+
+xlsx::write.xlsx(oslo2_core_signature_correlation_padj,
+                 file = "../results/Table_S8_cor_signatures_to_core_signature.xlsx",
+                 sheet = "patients_Oslo2",
+                 append = TRUE)
+
+```
+
+
 
 ## Signature correlations to clinical variables
 
@@ -1401,7 +1835,6 @@ for(i in interest){
 
 
 ```
-
 
 # Continue now in Notch Analysis Part 7b
 

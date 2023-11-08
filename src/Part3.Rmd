@@ -104,6 +104,7 @@ library(DT)
 library(clusterProfiler)
 library(ComplexHeatmap)
 library(enrichplot)
+library(pROC)
 
 library(msigdbr)
 
@@ -203,6 +204,10 @@ The visualisation of the correlation matrix was performed by `ggcorrplot` [@R-gg
 
 **Gene set enrichment analysis (GSEA)**  
 GSEA was performed by the `fgsea` implementation in `clusterProfiler` [@R-clusterProfiler] and visualized by `enrichplot` [@R-enrichplot].  
+
+**ROC Analysis**  
+Receiver operating characteristic (ROC) and accuracy rates were calculated with the help of the implementation of `pROC` [@R-pROC; @pROC2011].   
+ 
 
 # Experimental Data Import
 
@@ -400,6 +405,7 @@ Following is a list of data sets that used CHiP Seq to identify Notch target gen
 
 # From: http://www.informatics.jax.org/homology.shtml
 # http://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt
+# store in: "../data/"
 
 HOM_MouseHumanSequence <- read_delim("../data/HOM_MouseHumanSequence.rpt", 
     delim = "\t", escape_double = FALSE, 
@@ -754,6 +760,8 @@ gs.notch.published = gs.notch.literature %>%
   dplyr::select(gs_name = term, gene_symbol)
 
 gs.notch.published_view <- gs.notch.published %>% 
+  dplyr::group_by(gs_name) %>% 
+  dplyr::distinct(gene_symbol) %>% 
   dplyr::arrange(gs_name, gene_symbol) %>% 
   tidyr::pivot_wider(names_from = "gs_name",
                      values_from = "gene_symbol",
@@ -786,8 +794,7 @@ rm(ddsSE,
    ddsSE_8h,
    ddsSE_72h, 
    meta.all_summary, 
-   notch_CCLE_mutations_csv_21Q1_long, 
-   qnt.mat_tpm_agg_log2)
+   notch_CCLE_mutations_csv_21Q1_long)
 
 ### --- Gene set enrichment using fgsea:
 
@@ -988,6 +995,213 @@ gseaplot2(Training_gsea_Jagged1_DAPT,
 #       color = as.character(merck_colors[c(3,2,1)]), ES_geom = "line")
 
 ```
+
+# ROC curve analysis
+
+We calculate the relative signature score (= Condition - Ground State) calculated on the 6 basal-like cell line set with known NOTCH alteration levels (as treated with either DAPT or cultivated on immobilized Jagged1). Subsequently, we do a ROC analysis to evaluate accuracy of the signatures to evaluate NOTCH activation levels.  
+
+```{r fig.width=12, fig.height=18}
+
+## get tpm values and scale the data:
+
+tpm_df_scaled <- qnt.mat_tpm_agg_log2 %>%
+  dplyr::select(names, stripped_cell_line_name, id_gene_symbol = symbol, quant_tpm, condition_treatment, condition_time, condition_replicate, condition_subtype, condition_sub_subtype) %>%
+  dplyr::group_by(id_gene_symbol) %>% 
+  dplyr::mutate(quant_scaled_tpm = as.numeric(scale(quant_tpm))) %>% 
+  dplyr::ungroup()
+
+
+# calculate signature scores for each of the models at each of the timepoints and treatment types
+
+signature_score <- function(x, df){
+  df %>% 
+    dplyr::filter(id_gene_symbol %in% x) %>% 
+    dplyr::group_by(names, stripped_cell_line_name, condition_treatment, condition_time, condition_replicate, condition_subtype) %>% 
+    dplyr::summarise(quant_signature = mean(quant_scaled_tpm, na.rm = TRUE)) %>% 
+    dplyr::ungroup()
+}
+
+gs.notch.published_list <- split(gs.notch.published$gene_symbol, gs.notch.published$gs_name)
+
+sig.scores_published.notch <- map_dfr(gs.notch.published_list, ~signature_score(.x, df = tpm_df_scaled), .id = "id_geneset_name")
+
+# get relative signature scores
+
+data_signature <- sig.scores_published.notch %>% 
+  dplyr::mutate(id_geneset_name = str_replace_all(id_geneset_name, "\\_", " ")) %>% 
+  tidyr::pivot_wider(names_from = "id_geneset_name",
+                     values_from = "quant_signature") %>% 
+  dplyr::mutate(condition_treatment=dplyr::recode_factor(
+    condition_treatment,
+    `FC`   = 'ground state',
+    `DAPT`      = 'Notch off',
+    `Jagged1`     = 'Notch on')) %>%
+  tidyr::pivot_longer(-c(1:6),
+                      names_to = "id_geneset_name",
+                      values_to = "score") %>%
+  dplyr::select(-names) %>% 
+  tidyr::pivot_wider(names_from = "condition_treatment",
+                     values_from = "score") %>%
+  dplyr::mutate(`Notch on rel` = `Notch on` - `ground state`,
+                  `Notch off rel` = `Notch off` - `ground state`) %>%
+  dplyr::select(-`ground state`) %>% 
+  tidyr::pivot_longer(-c(1:5),
+                      names_to = "condition_treatment",
+                      values_to = "quant_rel") %>% 
+  dplyr::filter(!is.na(quant_rel))
+
+# Relative scores in all cancer types:
+
+data_signature_rel <- data_signature %>% 
+  dplyr::filter(grepl("rel$",condition_treatment))
+
+plot_list_training_published_rel <- list()
+conf_int_training_published_rel <- list()
+
+# response: TRUE labels
+# predictor: Signature score
+
+for(i in unique(data_signature_rel$id_geneset_name)){
+  
+  data_signature_rel_i <- data_signature_rel %>% 
+    dplyr::filter(id_geneset_name == !!i)
+  
+  r <- roc(data_signature_rel_i$condition_treatment,
+           data_signature_rel_i$quant_rel,
+           levels=c("Notch on rel", "Notch off rel"),
+           direction = "auto")
+  
+  plot_list_training_published_rel[[i]] <- ggroc(r) +
+    labs(title = i,
+         y = "Sensitivity (TPR)",
+         x = "Specificity (FPR)") +
+    geom_segment(aes(x = 1, xend = 0, y = 0, yend = 1), color = "grey", linetype = "dashed") +
+    scale_y_continuous() +
+    scale_x_reverse() +
+    theme(title = element_text(size = 6)) +
+    annotate("text", 
+             size = 2.5,
+             x = 0.95,
+             hjust = 0,
+             y = 0.05, 
+             label = paste0("AUC = ", round(auc(r), 2), " (", round(ci.auc(r)[1],2), " - ", round(ci.auc(r)[3],2), ")"))
+
+  conf_int_training_published_rel[[i]] <- data.frame(id_geneset_name = i,
+                                  AUC = as.numeric(auc(r)),
+                                  upper = as.numeric(ci.auc(r)[3]),
+                                  lower = as.numeric(ci.auc(r)[1]))
+}
+
+conf_int_training_published_rel <- bind_rows(conf_int_training_published_rel)
+DT::datatable(conf_int_training_published_rel,
+          class = 'cell-border stripe', 
+          extensions = 'Buttons',                                       # Add buttons for download
+          filter = "top",                                               # Add column search for factor variables
+          rownames = FALSE,
+          options = list(
+            scrollX='800px',
+            dom = 'Bfrtip',
+            buttons = c('excel')
+            )
+          ) 
+
+
+plot_grid(plotlist=plot_list_training_published_rel,
+          nrow= 10)
+
+
+xlsx::write.xlsx(conf_int_training_published_rel,
+                 file = "Signatures_AUCs.xlsx",
+                 sheet = "ROC Training Published 8+72h",
+                 row.names = FALSE)
+
+```
+
+## AUC comparisons
+
+```{r fig.height=10, fig.width=8.5}
+
+conf_int_training_published_rel %>% 
+  dplyr::mutate(id_geneset_name = factor(id_geneset_name, levels = unique(.$id_geneset_name)[order(.$AUC)])) %>% 
+  ggplot(aes(y = id_geneset_name,
+             x = AUC,
+             fill = AUC)) + 
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(xmin=lower, 
+                     xmax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(x = "AUC",
+       y = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "6 basal-like BC cell line data set, AUC with 95% CI")
+
+
+```
+
+### Focus signatures
+
+```{r fig.width=8, fig.height=9}
+
+# signatures to show:
+
+focus_signatures <- c("Notch 20-Gene Signature", sort(c( 
+"Braune_2016_TNBC_Notch_sig_CSL_KO",
+"Castel_2013_C2C12_Dll1_vs_DAPT_targets_24h_up",
+"WP_NOTCH_SIGNALING_PATHWAY",
+"GOBP_NOTCH_SIGNALING_INVOLVED_IN_HEART_DEVELOPMENT",
+"Labban_2018_SCC_RBPJ_targets",
+"Leontovich_2018_NOTCH3_nuclear_reprogramming_BRCA",
+"PID_NOTCH_PATHWAY",
+"Stoeck2014_TNBC_ACC_GSI_response_1",
+"WP_CANONICAL_AND_NONCANONICAL_NOTCH_SIGNALING",
+"KEGG_NOTCH_SIGNALING_PATHWAY",
+"Poulsen_2018_N1_repressed",
+"HALLMARK_NOTCH_SIGNALING",
+"BIOCARTA_NOTCH_PATHWAY",
+"VILIMAS_NOTCH1_TARGETS_UP",
+"GOBP_POSITIVE_REGULATION_OF_NOTCH_SIGNALING_PATHWAY",
+"Xu_2017_MDAMB231_RBPJ_targets")))
+
+focus_signatures_space <- str_replace_all(focus_signatures, "\\_", " ")
+
+plot_grid(plotlist=plot_list_training_published_rel[focus_signatures_space],
+          nrow= 5)
+
+```
+
+
+## AUC comparisons focus
+
+```{r fig.height=5, fig.width=8.5}
+
+conf_int_training_published_rel %>% 
+  dplyr::filter(id_geneset_name %in% !!focus_signatures_space) %>% 
+  dplyr::mutate(id_geneset_name = factor(id_geneset_name, levels = unique(.$id_geneset_name)[order(.$AUC)])) %>% 
+  ggplot(aes(y = id_geneset_name,
+             x = AUC,
+             fill = AUC)) + 
+  geom_bar(stat="identity") +
+  geom_errorbar( aes(xmin=lower, 
+                     xmax=upper), 
+                 width=0.5, colour="black", alpha=0.9, size=0.5) +
+  scale_fill_gradient(low = merck_colors[1],
+                      high = merck_colors[6],
+                      limits = c(0.5,1),
+                      na.value = merck_colors[1]) +
+  rotate_x_text(angle = 90) +
+  labs(x = "AUC",
+       y = "ID",
+       title = "ROC Analysis for published signatures",
+       subtitle = "6 basal-like BC cell line data set, AUC with 95% CI")
+
+
+```
+
 
 # Evaluation of Coherence Scores
 

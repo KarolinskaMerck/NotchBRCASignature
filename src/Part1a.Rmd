@@ -103,6 +103,7 @@ library(uwot)
 library(rstatix)
 library(VennDiagram)
 library(BiocParallel)
+library(ggtree)
 
 # Citations
 knitr::write_bib(file = '../src/part1a.bib')
@@ -293,30 +294,49 @@ Here, we make use of the count and TPM values that were provided by SciLife labs
 
   ####### using Organism.dplyr #######
   #
-  # run locally (our system has no connection to the internet, therefore this needs to be run on a local machine)
-
-  if(!file.exists("../data/part1_qnt.ann.rds")){
+  # new dbdplyr does not work with this package
+# 
+#   if(!file.exists("../data/part1_qnt.ann.rds")){
+#   
+#       # --- Add chromosomal annotations to ensembl ids (remove version number)
+#     qnt.ann = Organism.dplyr::src_organism('TxDb.Hsapiens.UCSC.hg38.knownGene', overwrite = TRUE) %>%
+#       Organism.dplyr::select(keytype='ensembl',
+#                              keys=str_remove(unique(rowData(salmon.merged.gene_counts)$gene_id),"\\.[0-9]+$"),
+#                              columns=c('symbol', 'gene_chrom', 'genename', 'ensembl', 
+#                                        'entrez'))                  %>%
+#       dplyr::distinct(symbol, .keep_all=T)  
+#     
+#     # if duplicated, use the smalles entrez id
+#     
+#     qnt.ann <- qnt.ann %>%
+#       dplyr::group_by(ensembl) %>%
+#       dplyr::filter(entrez == min(entrez))
+#     
+#     saveRDS(qnt.ann, 
+#         file = "../data/part1_qnt.ann.rds")
+#     
+#   } else {
+#     qnt.ann <- readRDS("../data/part1_qnt.ann.rds")
+#   }
   
-      # --- Add chromosomal annotations to ensembl ids (remove version number)
-    qnt.ann = Organism.dplyr::src_organism('TxDb.Hsapiens.UCSC.hg38.knownGene') %>%
-      Organism.dplyr::select(keytype='ensembl',
-                             keys=str_remove(unique(rowData(salmon.merged.gene_counts)$gene_id),"\\.[0-9]+$"),
-                             columns=c('symbol', 'gene_chrom', 'genename', 'ensembl', 
-                                       'entrez'))                  %>%
-      dplyr::distinct(symbol, .keep_all=T)  
-    
-    # if duplicated, use the smalles entrez id
+  # --- use org.Hs.eg.db
+
+qnt.ann <- AnnotationDbi::select(org.Hs.eg.db, 
+                        keys=str_remove(unique(rowData(salmon.merged.gene_counts)$gene_id),"\\.[0-9]+$"), 
+                        columns=c('SYMBOL', 'GENENAME', 'ENSEMBL', 'ENTREZID'), 
+                        keytype='ENSEMBL') %>%
+  dplyr::rename(symbol=SYMBOL, 
+                gene_chrom=GENENAME, 
+                ensembl=ENSEMBL,
+                entrez=ENTREZID) %>%
+  dplyr::distinct(symbol, .keep_all=TRUE) %>%
+  dplyr::right_join(data.frame(ensembl=str_remove(unique(rowData(salmon.merged.gene_counts)$gene_id),"\\.[0-9]+$")), by='ensembl') 
+
+# if duplicated, use the smalles entrez id
     
     qnt.ann <- qnt.ann %>%
       dplyr::group_by(ensembl) %>%
       dplyr::filter(entrez == min(entrez))
-    
-    saveRDS(qnt.ann, 
-        file = "../data/part1_qnt.ann.rds")
-    
-  } else {
-    qnt.ann <- readRDS("~/Projects 2023/notch-project-github-upload/data/part1_qnt.ann.rds")
-  }
   
   # --- Add information to summarized experiment:
   
@@ -376,15 +396,15 @@ Subsequently, we will make use of the `DESeq2` [@R-DESeq2] pipeline to identify 
 
 se_counts_filtered <- se_counts
 
-# load TCGA-BRCA, Oslo2 and METABRIC gene universe, saved in "Gene_Universe.rds"
+# load TCGA-BRCA, Oslo2 and METABRIC gene universe, saved in "TCGA_METABRIC_Oslo2_Gene_Universe.rds"
 # intersection of genes present in all three datasets: TCGA-BRCA, METABRIC and Oslo2
 
 Gene_universe <- readRDS("../data/TCGA_METABRIC_Oslo2_Gene_Universe.rds")
-Gene_universe <- Gene_universe %>% 
-    mutate(id_ensembl_gene_ids = strsplit(as.character(id_ensembl_gene_ids), "\\|")) %>% 
+Gene_universe <- Gene_universe %>%
+    mutate(id_ensembl_gene_ids = strsplit(as.character(id_ensembl_gene_ids), "\\|")) %>%
     unnest(id_ensembl_gene_ids)
-
 ridx <- rowData(se_counts_filtered)$ensembl %in% Gene_universe$id_ensembl_gene_ids
+
 # table(ridx)
 # FALSE  TRUE 
 # 46228 14441 
@@ -404,7 +424,7 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- is.na(rowData(se_counts_filtered)$entrez)
 # table(ridx)
 # FALSE  TRUE 
-# 14025    60 
+# 14009    76 
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # remove sex-linked genes (Y chromosome and Xist)
@@ -414,7 +434,7 @@ ridx <- ifelse(is.na(ridx), FALSE, ridx)
 ridx <- ifelse(rowData(se_counts_filtered)$symbol == "XIST", TRUE, ridx)
 # table(ridx)
 # FALSE  TRUE 
-# 14023     2 
+# 14006     3 
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # remove ribosomal genes
@@ -422,7 +442,7 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- grepl(pattern = "^RPS|^RNA5|^RPL", x = rowData(se_counts_filtered)$symbol)
 # table(ridx)
 # FALSE  TRUE 
-# 13927    96 
+# 13910    96 
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # immuneglobilin genes:
@@ -430,7 +450,7 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- grepl(pattern = "^IG[HKL]", x = rowData(se_counts_filtered)$symbol)
 # table(ridx)
 # FALSE  TRUE 
-# 13924     3 
+# 13907     3  
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # exclude readthrough transcripts:
@@ -438,7 +458,7 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- grepl(pattern = "readthrough", x = rowData(se_counts_filtered)$symbol)
 # table(ridx)
 # FALSE 
-# 13927 
+# 13907   
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # uncharactarized locations:
@@ -446,7 +466,7 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- grepl(pattern = "^LOC[0-9]+", x = rowData(se_counts_filtered)$symbol)
 # table(ridx)
 # FALSE  TRUE 
-# 13894    33 
+# 13858    49 
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # long intergenic non-protein coding RNA
@@ -454,14 +474,14 @@ se_counts_filtered <- se_counts_filtered[!ridx,]
 ridx <- grepl(pattern = "^LINC[0-9]+", x = rowData(se_counts_filtered)$symbol)
 # table(ridx)
 # FALSE  TRUE 
-# 13883    11 
+# 13844    14  
 se_counts_filtered <- se_counts_filtered[!ridx,]
 
 # removed duplicated genes -> take smallest entrez id:
 
 # table(duplicated(rowData(se_counts_filtered)$symbol))
 # FALSE 
-# 13883 
+# 13844 
 
 # scale numerical metadata columns: meta_rin, meta_lib_conc, meta_lib_size_bp
 
@@ -490,8 +510,8 @@ ddsSE <- DESeq(ddsSE_preparation)
 
 # Export DESeq2 object for GEO upload
 
-saveRDS(ddsSE,
-        file = "../results/Training/TNBC_DESeq2.rds")
+base::saveRDS(ddsSE,
+        file = "../data/Training/TNBC_DESeq2.rds")
 
 ```
 
@@ -507,7 +527,7 @@ For unsupervised clustering and PCA analyses, data will be variance stabilized.
 #                                                                 #
 ###################################################################
 
-ddsSE <- load("../data/Training/TNBC_DESeq2.rds")
+ddsSE <- base::readRDS("C:/Users/M286901/Desktop/Notch Project/data/Training/TNBC_DESeq2.rds")
 
 # this gives log2(n + 1)
 ntd <- normTransform(ddsSE)
@@ -618,6 +638,8 @@ eigencorplot(p,
 
 ```
 
+Numbers of genes used for the PCA: **`r length(p$xvars)`**
+
 These results indicate, that we will can add the additional metadata sample information RIN and average library size in bp to improve our model. The concentration of the library had only minor influence on the total sample variance.  
 
 ```{r 05b-PCA-screeplot, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 4, fig.height=3}
@@ -648,6 +670,101 @@ biplot(p,
        hline = 0, vline = 0,
        legendPosition = 'right') +
   scale_shape_manual(values = c(0,15,1,16,2,17))
+
+
+biplot(p,
+       title = "PC1 vs PC2",
+       subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'Treatment',
+       shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right',
+       ellipse = TRUE,
+       ylim = c(-150,150),
+       xlim = c(-150,150)) +
+  scale_shape_manual(values = c(15,16,17,18,19, 20))
+```
+
+
+```{r 05c-PCA-1b, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 6, fig.height=5}
+
+biplot(p,
+       title = "PC6 vs PC7",
+       x = "PC6",
+       y = "PC7",
+       subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_cell_line',
+       shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+```
+
+
+```{r 05c-PCA-1c, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 6, fig.height=5}
+
+biplot(p,
+       title = "PC6 vs PC10",
+       x = "PC6",
+       y = "PC10",
+       subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_cell_line',
+       shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+```
+
+
+```{r 05c-PCA-1d, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 6, fig.height=5}
+
+biplot(p,
+       title = "PC7 vs PC10",
+       x = "PC7",
+       y = "PC10",
+       subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_cell_line',
+       shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'right') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+```
+
+
+```{r 05c-PCA-1e, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 17, fig.height=15}
+
+pairsplot_plot <- pairsplot(p,
+          trianglelabSize = 9,
+          pointSize = 0.5,
+          legendLabSize = 3,
+          legendIconSize = 0.5,
+          labSize = 0.75,
+          axisLabSize = 5,
+          titleLabSize = 16,
+          hlineWidth = 0.2,
+          vlineWidth = 0.2,
+          borderWidth = 0.4,
+          margingaps = unit(c(0.05, 0.05, 0.05, 0.05), "cm"),
+       title = "Pairsplot",
+       components = getComponents(p, seq_len(10)),
+       #subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_cell_line',
+       shape = "Treatment",
+       colkey = as.character(merck_colors),
+       hline = 0, vline = 0,
+       legendPosition = 'none') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+pairsplot_plot
 ```
 
 ```{r 05c-PCA-2, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 10, fig.height=9}
@@ -791,6 +908,136 @@ ggscatter(z_tumap_df,
                  color = condition_cell_line)) + 
   guides(col = guide_legend(nrow = 7)) +
   scale_shape_manual(values = c(0,15,1,16,2,17))
+
+save.image("Part1image.RData")
+
+```
+
+## Dendrograms of Basal-like cell line panel
+
+### Pearson Correlation
+
+```{r fig.height=8, fig.width=4}
+
+condition_labels <- data.frame(files = colnames(assay(vsd))) %>% 
+  dplyr::left_join(as.data.frame(colData(vsd)),
+                   by = join_by(files)) %>% 
+  dplyr::mutate(condition_label_name = case_when(
+    condition_treatment == "FC" ~ paste0(condition_cell_line, "_ground_state_", condition_time, "_", condition_replicate),
+    condition_treatment == "DAPT" ~ paste0(condition_cell_line, "_notch_off_", condition_time, "_", condition_replicate),
+    condition_treatment == "Jagged1" ~ paste0(condition_cell_line, "_notch_on_", condition_time, "_", condition_replicate)
+  ))
+
+vsd_matrix <- assay(vsd)
+colnames(vsd_matrix) <- str_replace_all(condition_labels$condition_label_name, "\\_", " ")
+
+# Calculate the distance matrix
+dist_matrix <- as.dist(1 - cor(vsd_matrix, method = "pearson"))
+
+# Perform hierarchical clustering
+hc_pearson <- hclust(dist_matrix, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_pearson,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 0.01) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Pearson Distance between the samples with ward.D2 clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+
+# Perform hierarchical clustering
+hc_pearson <- hclust(dist_matrix, method = "complete")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_pearson,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 0.01) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Pearson Distance between the samples with ward.D2 clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+```
+
+
+```{r fig.height=8, fig.width=4}
+# Calculate the Euclidean distance matrix
+dist_matrix_euclidean <- dist(t(vsd_matrix), method = "euclidean")
+
+# Hierarchical clustering
+hc_euclidean <- hclust(dist_matrix_euclidean, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Euclidean Distance between the samples with ward.D2 clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+
+# Hierarchical clustering
+hc_euclidean <- hclust(dist_matrix_euclidean, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Euclidean Distance between the samples with complete clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+```
+
+
+```{r fig.height=8, fig.width=4}
+# Calculate the Manhattan distance matrix
+dist_matrix_manhattan <- dist(t(vsd_matrix), method = "manhattan")
+
+# Hierarchical clustering
+hc_manhattan <- hclust(dist_matrix_manhattan, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Manhattan Distance between the samples with ward.D2 clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+
+
+# Hierarchical clustering
+hc_manhattan <- hclust(dist_matrix_manhattan, method = "complete")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Manhattan Distance between the samples with complete clustering",
+       subtitle = "6 basal-like cell line panel")
+p
+
+
 ```
 
 ## Heatmap of variable genes

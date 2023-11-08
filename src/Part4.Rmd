@@ -15,7 +15,7 @@ output:
     toc_float:
       collapsed: FALSE
       smooth_scroll: FALSE
-bibliography: "`r here::here('src', 'part4.bib')`"
+bibliography: "`r here::here('src' ,'part4.bib')`"
 link-citations: true
 biblio-style: "apalike"
 ---
@@ -107,12 +107,13 @@ library(Organism.dplyr)
 library(org.Hs.eg.db)
 library(TxDb.Hsapiens.UCSC.hg19.knownGene)
 library(limma)
+library(ggtree)
 
 library(clusterProfiler)
 library(msigdbr)
 
 # statistics
-# 
+
 library(rstatix)        
 
 # Citations:
@@ -369,15 +370,27 @@ qnt.met = qnt.all                                                           %>%
   tibble::column_to_rownames('sample')
 
 # --- Add chromosomal annotations to gene symbols
-qnt.ann = Organism.dplyr::src_organism('TxDb.Hsapiens.UCSC.hg19.knownGene') %>%
-  Organism.dplyr::select(keytype='symbol',
-                         keys=base::rownames(qnt.mat),
-                         columns=c('symbol', 'gene_chrom',
-                                   'genename', 'ensembl'))          %>%
-  dplyr::distinct(symbol, .keep_all=T)                              %>%
-  dplyr::right_join(base::data.frame(symbol=
-                                       base::rownames(qnt.mat))) %>%
+
+qnt.ann <- AnnotationDbi::select(org.Hs.eg.db, 
+                        keys=rownames(qnt.mat), 
+                        columns=c('SYMBOL', 'GENENAME', 'ENSEMBL'), 
+                        keytype='SYMBOL') %>%
+  dplyr::rename(symbol=SYMBOL, 
+                gene_chrom=GENENAME, 
+                ensembl=ENSEMBL) %>%
+  dplyr::distinct(symbol, .keep_all=TRUE) %>%
+  dplyr::right_join(data.frame(symbol=rownames(qnt.mat)), by='symbol') %>%
   tibble::column_to_rownames('symbol')
+
+# qnt.ann = Organism.dplyr::src_organism('TxDb.Hsapiens.UCSC.hg19.knownGene') %>%
+#   Organism.dplyr::select(keytype='symbol',
+#                          keys=base::rownames(qnt.mat),
+#                          columns=c('symbol', 'gene_chrom',
+#                                    'genename', 'ensembl'))          %>%
+#   dplyr::distinct(symbol, .keep_all=T)                              %>%
+#   dplyr::right_join(base::data.frame(symbol=
+#                                        base::rownames(qnt.mat))) %>%
+#   tibble::column_to_rownames('symbol')
 
 # --- Gather information on the completeness of the design
 # --- For a complete design, each cell line would have four condition times
@@ -482,13 +495,13 @@ limma.fac = edgeR::calcNormFactors(limma.dat, method='TMM')
 
 # --- Filter for genes present in the gene universe of the trainings cohort
 
-rnaseq_gene_universe <- readRDS("../data/rnaseq_gene_universe.rds")
+rnaseq_gene_universe <- readRDS("../data/TNBC_gene_universe.rds")
 
 limma.low = base::which(limma.fac$genes$entrez %in% rnaseq_gene_universe$entrez)
 limma.fac = limma.fac[limma.low, ]
 
 # base::dim(limma.fac)
-# # [1] 13470   100
+# # [1] 13376   100
 
 # --- Prepare lib-prep batch effect and group factor for model matrix
 limma.lib = qnt.met_no_ctrl$condition_lib_prep
@@ -523,7 +536,7 @@ limma.cpm = limma::voom(limma.fac, limma.des, plot=T)
 limma.cor = limma::duplicateCorrelation(limma.cpm, limma.des,
                                         block=qnt.met_no_ctrl$condition_cell_line)
 # limma.cor$consensus
-# [1] 0.8584537
+# [1] 0.8591308
 
 # --- The intra cell line correlation will change the voom weights slightly,
 # --- so we run voom a second time ("double voom")
@@ -538,7 +551,7 @@ limma.cpm = limma::voom(limma.fac, limma.des,
 limma.cor = limma::duplicateCorrelation(limma.cpm, limma.des,
                                         block=qnt.met_no_ctrl$condition_cell_line)
 # limma.cor$consensus
-# [1] 0.8608528
+# [1] 0.8615234
 
 ```
 
@@ -590,6 +603,8 @@ eigencorplot(p,
 
 
 ```
+
+Numbers of genes used for the PCA: **`r length(p$xvars)`**
 
 ```{r 04b-PCA, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 4, fig.height=3}
 
@@ -664,6 +679,34 @@ biplot(p,
        legendPosition = 'right') +
   scale_shape_manual(values = c(0,15,1,16,2,17))
 
+```
+
+```{r 04d-PCA-pairsplot, echo=TRUE, message=FALSE, warning=FALSE, fig.width= 17, fig.height=15}
+
+pairsplot_plot <- pairsplot(p,
+          trianglelabSize = 9,
+          pointSize = 0.5,
+          legendLabSize = 3,
+          legendIconSize = 0.5,
+          labSize = 0.75,
+          axisLabSize = 5,
+          titleLabSize = 16,
+          hlineWidth = 0.2,
+          vlineWidth = 0.2,
+          borderWidth = 0.4,
+          margingaps = unit(c(0.05, 0.05, 0.05, 0.05), "cm"),
+       title = "Pairsplot",
+       components = getComponents(p, seq_len(10)),
+       #subtitle = "Cell Line and treatment condition",
+       lab = NA,
+       colby = 'condition_subtype',
+       shape = "Treatment",
+       colkey = subtype_colors[levels(p$metadata$condition_subtype)],
+       hline = 0, vline = 0,
+       legendPosition = 'none') +
+  scale_shape_manual(values = c(0,15,1,16,2,17))
+
+pairsplot_plot
 ```
 
 ```{r 04d-Umap, echo=TRUE, message=FALSE, warning=FALSE, fig.width = 7, fig.height = 6}
@@ -795,7 +838,93 @@ ggscatter(z_tumap_df,
              nudge_x = -1.3,
              nudge_y = 0.3) + 
   guides(col = guide_legend(nrow = 7))
+
 ```
+
+## Dendrogram of 19-cell line panel
+
+### Pearson Correlation
+
+```{r fig.height=8, fig.width=4}
+
+condition_labels <- data.frame(sample_name = colnames(limma.cpm$E)) %>% 
+  dplyr::left_join(qnt.met_no_ctrl,
+                   by = join_by(sample_name)) %>% 
+  dplyr::mutate(condition_label_name = case_when(
+    condition_treatment == "1_normal" ~ paste0(condition_cell_line, "_ground_state_", condition_time),
+    condition_treatment == "2_low" ~ paste0(condition_cell_line, "_notch_off_", condition_time),
+    condition_treatment == "3_high" ~ paste0(condition_cell_line, "_notch_on_", condition_time)
+  ))
+
+voom_matrix <- limma.cpm$E
+colnames(voom_matrix) <- str_replace_all(condition_labels$condition_label_name, "\\_", " ")
+
+# Calculate the distance matrix
+dist_matrix <- as.dist(1 - cor(voom_matrix, method = "pearson"))
+
+# Perform hierarchical clustering
+hc_pearson <- hclust(dist_matrix, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_pearson,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 0.01) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Pearson Distance between the samples with ward.D2 clustering",
+       subtitle = "19 breast cancer cell line panel")
+p
+```
+
+
+```{r fig.height=8, fig.width=4}
+# Calculate the Euclidean distance matrix
+dist_matrix_euclidean <- dist(t(voom_matrix), method = "euclidean")
+
+# Hierarchical clustering
+hc_euclidean <- hclust(dist_matrix_euclidean, method = "ward.D2")
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Euclidean Distance between the samples with ward.D2 clustering",
+       subtitle = "19 breast cancer cell line panel")
+p
+```
+
+
+```{r fig.height=8, fig.width=4}
+# Calculate the Manhattan distance matrix
+dist_matrix_manhattan <- dist(t(voom_matrix), method = "manhattan")
+
+# Hierarchical clustering
+hc_manhattan <- hclust(dist_matrix_manhattan, method = "ward.D2")
+
+
+# Convert hclust to ggtree object
+p <- ggtree::ggtree(hc_euclidean,
+                    layout = "rectangular") + 
+  geom_tippoint(color=merck_colors[1], shape=17, size=2) + 
+  coord_cartesian(clip = 'off') + 
+  geom_tiplab(size = 1.5,
+              offset = 10) +
+  theme_tree(plot.margin=margin(6, 120, 6, 5))+
+  labs(title = "Manhattan Distance between the samples with ward.D2 clustering",
+       subtitle = "19 breast cancer cell line panel")
+p
+
+```
+
+
+
+
 
 ## Heatmap of variable genes
 
@@ -1405,7 +1534,7 @@ notch_pathways_genes_symbol <- unique(notch_pathways_genes_symbol$SYMBOL)
 # Phenotype data were downloaded from depmap-CCLE (21q1)
 # https://depmap.org/portal/download/all/
 
-CCLE_sample_info_21Q1 <- read_csv("../../..//Datasets/Cell Lines/CCLE/CCLE_sample_info_21Q1.csv")
+CCLE_sample_info_21Q1 <- read_csv("../data/CCLE/CCLE_sample_info_21Q1.csv")
 
 # subset to used cell lines
 
@@ -1421,7 +1550,7 @@ CCLE_sample_info_21Q1_used <- unique(qnt.mat_tpm_agg_log2$DepMap_ID) %>%
 
 ### mutation data
 
-CCLE_mutations_csv_21Q1 <- read_csv("../../../Datasets/Cell Lines/CCLE/CCLE_mutations.csv_21Q1.csv")
+CCLE_mutations_csv_21Q1 <- read_csv("../data/CCLE/CCLE_mutations.csv_21Q1.csv")
 
 # remove silent, keep only cell lines of screen
 CCLE_mutations_csv_21Q1 <- CCLE_mutations_csv_21Q1 %>%

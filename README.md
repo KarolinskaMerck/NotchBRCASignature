@@ -30,10 +30,22 @@ Breast cancer, Notch signalling, transcriptomic signature, therapy, diagnostics
 
 # Prepare Additional Files needed:
 
-Store files in: **"../data/"**
+Store files in: **"../data/"**  
 
-**Mouse-Human Homologues**
-From: http://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt
+**Mouse-Human Homologues**  
+From: http://www.informatics.jax.org/downloads/reports/HOM_MouseHumanSequence.rpt  
+
+Store files in: **"../data/CCLE/"**  
+
+**CCLE phenotype data**  
+Phenotype data were downloaded from depmap-CCLE (21q1)  
+From: https://depmap.org/portal/download/all/  
+and stored in "data/CCLE/CCLE_sample_info_21Q1.csv"  
+
+**CCLE mutation data**  
+Mutations were downloaded from depmap-CCLE (21q1)  
+https://depmap.org/portal/download/all/  
+and stored in "data/CCLE/CCLE_mutations.csv_21Q1.csv"  
 
 ## Signatures from publications:
 

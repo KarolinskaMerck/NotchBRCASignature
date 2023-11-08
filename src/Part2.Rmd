@@ -304,11 +304,43 @@ knitr::kable(Data_Sources,
 
 ### --- Load full data sets:
 
-### --- TCGA
-
-gene_universe <- rowData(ddsSE)$symbol
+## First: Get full gene universe
 
 id_merck_tcga_rna_wtstmm_gexp <- "merck_tcga_rna_wtstmm_gexp_21q2_prod_kreis_2"
+
+TCGA_gene_universe = api$conn %>%
+  tbl(id_merck_tcga_rna_wtstmm_gexp) %>% 
+  dplyr::filter(id_tcga_cohort == "BRCA",
+                sample_status == "primary tumor") %>%
+  dplyr::select(id_gene_symbol) %>%
+  dplyr::collect() %>% 
+  dplyr::distinct()
+
+metabric_gene_universe <- api$conn %>%
+  tbl(id_metabric) %>% 
+  dplyr::select(id_gene_symbol) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+Oslo2_gene_universe <- api$conn %>%
+  tbl(id_oslo2) %>% 
+  dplyr::select(id_gene_symbol) %>% 
+  collect() %>% 
+  dplyr::distinct()
+
+gene_universe_3_datasets <- unique(c(TCGA_gene_universe$id_gene_symbol, 
+                              metabric_gene_universe$id_gene_symbol,
+                              Oslo2_gene_universe$id_gene_symbol))
+
+# base::save.image(file = "part2_start.RData")
+
+base::saveRDS(gene_universe_3_datasets,
+              file = "../data/TCGA_METABRIC_Oslo2_Gene_Universe.rds")
+
+### --- TCGA
+
+# Now use the gene universe that we filtered for in the TNBC BRCA data set
+gene_universe <- rowData(ddsSE)$symbol
 
 gexp = api$conn %>%
   tbl(id_merck_tcga_rna_wtstmm_gexp) %>% 
@@ -322,7 +354,6 @@ cpm_mat = gexp  %>%
   dplyr::select(-quant_tmm_tpm) %>%
   tidyr::pivot_wider(names_from = "id_gene_symbol",
                      values_from = "quant_tmm_cpm") %>% 
-  # tidyr::spread(key="id_gene_symbol", value="quant_tmm_cpm")  %>% 
   dplyr::select_if(~all(!is.na(.x)))  %>%
   dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>%
   tibble::column_to_rownames("id_tcga_sample_barcode")
@@ -331,7 +362,6 @@ tpm_mat = gexp  %>%
   dplyr::select(-quant_tmm_cpm) %>%
   tidyr::pivot_wider(names_from = "id_gene_symbol",
                      values_from = "quant_tmm_tpm") %>% 
-  #tidyr::spread(key="id_gene_symbol", value="quant_tmm_tpm")  %>% 
   dplyr::select_if(~all(!is.na(.x)))  %>%
   dplyr::mutate(across(where(is.numeric), ~as.vector(scale(log2(.x + 1))))) %>%
   tibble::column_to_rownames("id_tcga_sample_barcode")
@@ -343,7 +373,6 @@ rm(gexp)
 metabric_gene_expession_data <- api$conn %>%
   tbl(id_metabric) %>% 
   dplyr::select(-meta_source, -meta_measurement, -id_gene_entrez_id) %>% 
-  # dplyr::filter(id_gene_symbol %in% !!gene_universe_selected_signatures) %>% 
   collect()
 
 # remove NA id_symbols (most likely obsolete entrez ids)
@@ -417,11 +446,6 @@ metabric_gene_expession_data_scaled_wide <- metabric_gene_expession_data_scaled_
 
 Oslo2_gene_expession_data_wide_full <- Oslo2_gene_expession_data_wide
 Oslo2_gene_expession_data_wide <- Oslo2_gene_expession_data_wide[,colnames(Oslo2_gene_expession_data_wide) %in% gene_universe_3_datasets]
-
-# base::save.image(file = "part2_start.RData")
-
-base::saveRDS(gene_universe_3_datasets,
-              file = "../data/TCGA_METABRIC_Oslo2_Gene_Universe.rds")
 
 ```
 
