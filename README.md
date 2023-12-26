@@ -13,7 +13,7 @@ or blockade of Notch by -secretase inhibitors, respectively. From this cadre 
 developed candidate transcriptomic signatures that were trained on a breast cancer patient dataset (the
 TCGA-BRCA cohort) and a broader breast cancer cell line cohort.
 
-#Results:  
+# Results:   
 An optimal 20-gene transcriptomic signature was selected. We validated the signature on two
 independent patient datasets (METABRIC and Oslo2) and it showed an improved coherence score and
 tumour specificity compared with previously published signatures. Furthermore, the signature score was
